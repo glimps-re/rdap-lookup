@@ -1,0 +1,742 @@
+openapi: 3.0.3
+info:
+  title: rdap-lookup API
+  description: High-performance RDAP (Registration Data Access Protocol) lookup service with two-tier caching
+  version: 1.0.0
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+
+paths:
+  # API v1 endpoints
+  /api/v1/domain/{name}:
+    get:
+      summary: Domain lookup
+      description: Lookup domain registration information via RDAP
+      operationId: lookupDomain
+      tags:
+        - Lookup
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: Domain name to lookup (e.g., example.com)
+          schema:
+            type: string
+            example: example.com
+      responses:
+        '200':
+          description: Domain information
+          headers:
+            X-Cache:
+              description: Cache status (HIT or MISS)
+              schema:
+                type: string
+                enum: [HIT, MISS]
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DomainResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/UpstreamError'
+
+  /api/v1/ip/{address}:
+    get:
+      summary: IP address lookup
+      description: Lookup IP network registration information via RDAP
+      operationId: lookupIP
+      tags:
+        - Lookup
+      parameters:
+        - name: address
+          in: path
+          required: true
+          description: IPv4 or IPv6 address to lookup
+          schema:
+            type: string
+            example: 8.8.8.8
+      responses:
+        '200':
+          description: IP network information
+          headers:
+            X-Cache:
+              description: Cache status (HIT or MISS)
+              schema:
+                type: string
+                enum: [HIT, MISS]
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IPResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/UpstreamError'
+
+  /api/v1/asn/{number}:
+    get:
+      summary: ASN lookup
+      description: Lookup Autonomous System Number (ASN) registration information via RDAP
+      operationId: lookupASN
+      tags:
+        - Lookup
+      parameters:
+        - name: number
+          in: path
+          required: true
+          description: ASN number (with or without AS prefix)
+          schema:
+            type: string
+            example: "15169"
+      responses:
+        '200':
+          description: ASN information
+          headers:
+            X-Cache:
+              description: Cache status (HIT or MISS)
+              schema:
+                type: string
+                enum: [HIT, MISS]
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ASNResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/UpstreamError'
+
+  /api/v1/entity/{handle}:
+    get:
+      summary: Entity lookup
+      description: Lookup entity (registrar, registrant, contact) information via RDAP
+      operationId: lookupEntity
+      tags:
+        - Lookup
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          description: Entity handle/identifier
+          schema:
+            type: string
+            example: GOOGLE-ARIN
+        - name: server
+          in: query
+          required: true
+          description: RDAP server URL to query (required for entity lookups)
+          schema:
+            type: string
+            format: uri
+            example: https://rdap.arin.net/registry
+      responses:
+        '200':
+          description: Entity information
+          headers:
+            X-Cache:
+              description: Cache status (HIT or MISS)
+              schema:
+                type: string
+                enum: [HIT, MISS]
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntityResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/UpstreamError'
+
+  /api/v1/batch:
+    post:
+      summary: Batch lookup
+      description: Perform multiple lookups in a single request (max 100 queries)
+      operationId: batchLookup
+      tags:
+        - Lookup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchRequest'
+      responses:
+        '200':
+          description: Batch results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  # Infrastructure endpoints (root level)
+  /healthz:
+    get:
+      summary: Liveness probe
+      description: Kubernetes liveness probe endpoint
+      operationId: healthz
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Service is alive
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+
+  /ready:
+    get:
+      summary: Readiness probe
+      description: Kubernetes readiness probe endpoint
+      operationId: ready
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadyResponse'
+        '503':
+          description: Service not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadyResponse'
+
+  /meta:
+    get:
+      summary: Service metadata
+      description: Returns service version and build information
+      operationId: meta
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Service metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetaResponse'
+
+  /metrics:
+    get:
+      summary: Prometheus metrics
+      description: Prometheus metrics endpoint
+      operationId: metrics
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Prometheus metrics in text format
+          content:
+            text/plain:
+              schema:
+                type: string
+
+components:
+  schemas:
+    DomainResponse:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Domain name in LDH (letters, digits, hyphen) format
+          example: example.com
+        unicode_name:
+          type: string
+          description: Domain name in Unicode (IDN) format
+          example: example.com
+        status:
+          type: array
+          items:
+            type: string
+          description: Domain status codes
+          example: ["active", "client transfer prohibited"]
+        registrar:
+          $ref: '#/components/schemas/Entity'
+        registrant:
+          $ref: '#/components/schemas/Entity'
+        admin_contact:
+          $ref: '#/components/schemas/Entity'
+        tech_contact:
+          $ref: '#/components/schemas/Entity'
+        nameservers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Nameserver'
+        created_date:
+          type: string
+          format: date-time
+          description: Domain creation date
+        updated_date:
+          type: string
+          format: date-time
+          description: Last update date
+        expiration_date:
+          type: string
+          format: date-time
+          description: Domain expiration date
+        dnssec:
+          $ref: '#/components/schemas/DNSSEC'
+        rdap_server:
+          type: string
+          format: uri
+          description: RDAP server URL used for this query
+
+    IPResponse:
+      type: object
+      properties:
+        start_address:
+          type: string
+          description: Start IP address of the network
+          example: 8.8.8.0
+        end_address:
+          type: string
+          description: End IP address of the network
+          example: 8.8.8.255
+        cidr:
+          type: array
+          items:
+            type: string
+          description: CIDR notation for the network
+          example: ["8.8.8.0/24"]
+        ip_version:
+          type: string
+          description: IP version (v4 or v6)
+          enum: [v4, v6]
+        name:
+          type: string
+          description: Network name
+          example: LVLT-GOGL-8-8-8
+        type:
+          type: string
+          description: Network type
+          example: ALLOCATION
+        country:
+          type: string
+          description: Two-letter country code
+          example: US
+        handle:
+          type: string
+          description: Network handle/identifier
+        parent_handle:
+          type: string
+          description: Parent network handle
+        status:
+          type: array
+          items:
+            type: string
+        registrant:
+          $ref: '#/components/schemas/Entity'
+        admin_contact:
+          $ref: '#/components/schemas/Entity'
+        tech_contact:
+          $ref: '#/components/schemas/Entity'
+        abuse_contact:
+          $ref: '#/components/schemas/Entity'
+        created_date:
+          type: string
+          format: date-time
+        updated_date:
+          type: string
+          format: date-time
+        rdap_server:
+          type: string
+          format: uri
+
+    ASNResponse:
+      type: object
+      properties:
+        asn:
+          type: integer
+          format: int64
+          description: Autonomous System Number
+          example: 15169
+        start_asn:
+          type: integer
+          format: int64
+          description: Start of ASN range (if range allocation)
+        end_asn:
+          type: integer
+          format: int64
+          description: End of ASN range (if range allocation)
+        name:
+          type: string
+          description: AS name
+          example: GOOGLE
+        type:
+          type: string
+          description: Allocation type
+          example: DIRECT ALLOCATION
+        country:
+          type: string
+          description: Two-letter country code
+          example: US
+        handle:
+          type: string
+          description: ASN handle/identifier
+        status:
+          type: array
+          items:
+            type: string
+        registrant:
+          $ref: '#/components/schemas/Entity'
+        admin_contact:
+          $ref: '#/components/schemas/Entity'
+        tech_contact:
+          $ref: '#/components/schemas/Entity'
+        abuse_contact:
+          $ref: '#/components/schemas/Entity'
+        created_date:
+          type: string
+          format: date-time
+        updated_date:
+          type: string
+          format: date-time
+        rdap_server:
+          type: string
+          format: uri
+
+    EntityResponse:
+      type: object
+      properties:
+        handle:
+          type: string
+          description: Entity handle/identifier
+          example: GOOGLE-ARIN
+        name:
+          type: string
+          description: Entity name
+          example: Google LLC
+        organization:
+          type: string
+          description: Organization name
+        email:
+          type: string
+          format: email
+          description: Contact email
+        phone:
+          type: string
+          description: Contact phone
+        address:
+          type: string
+          description: Full address
+        country:
+          type: string
+          description: Two-letter country code
+          example: US
+        roles:
+          type: array
+          items:
+            type: string
+          description: Entity roles
+          example: ["registrant", "technical"]
+        status:
+          type: array
+          items:
+            type: string
+        created_date:
+          type: string
+          format: date-time
+        updated_date:
+          type: string
+          format: date-time
+        related_ip_networks:
+          type: array
+          items:
+            $ref: '#/components/schemas/IPSummary'
+        related_asns:
+          type: array
+          items:
+            $ref: '#/components/schemas/ASNSummary'
+        rdap_server:
+          type: string
+          format: uri
+
+    Entity:
+      type: object
+      description: Simplified entity/contact information
+      properties:
+        handle:
+          type: string
+          description: Entity handle/identifier
+        name:
+          type: string
+          description: Entity name
+        organization:
+          type: string
+          description: Organization name
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        address:
+          type: string
+        country:
+          type: string
+          description: Two-letter country code
+        roles:
+          type: array
+          items:
+            type: string
+
+    Nameserver:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Nameserver hostname
+          example: ns1.example.com
+        unicode_name:
+          type: string
+          description: Nameserver hostname in Unicode
+        ipv4:
+          type: array
+          items:
+            type: string
+          description: IPv4 addresses
+        ipv6:
+          type: array
+          items:
+            type: string
+          description: IPv6 addresses
+
+    DNSSEC:
+      type: object
+      properties:
+        signed:
+          type: boolean
+          description: Whether the zone is signed
+        delegation_signed:
+          type: boolean
+          description: Whether the delegation is signed
+
+    IPSummary:
+      type: object
+      properties:
+        handle:
+          type: string
+        start_address:
+          type: string
+        end_address:
+          type: string
+        name:
+          type: string
+        country:
+          type: string
+
+    ASNSummary:
+      type: object
+      properties:
+        asn:
+          type: integer
+          format: int64
+        handle:
+          type: string
+        name:
+          type: string
+        country:
+          type: string
+
+    BatchRequest:
+      type: object
+      required:
+        - queries
+      properties:
+        queries:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/BatchQuery'
+
+    BatchQuery:
+      type: object
+      required:
+        - type
+        - value
+      properties:
+        type:
+          type: string
+          enum: [domain, ip, asn, entity]
+          description: Query type
+        value:
+          type: string
+          description: Query value (domain name, IP address, ASN, or entity handle)
+        server:
+          type: string
+          format: uri
+          description: RDAP server URL (required for entity queries)
+
+    BatchResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/BatchResult'
+        stats:
+          $ref: '#/components/schemas/BatchStats'
+
+    BatchResult:
+      type: object
+      properties:
+        type:
+          type: string
+          description: Query type
+        value:
+          type: string
+          description: Query value
+        data:
+          type: object
+          description: Query result (DomainResponse, IPResponse, ASNResponse, or EntityResponse)
+        error:
+          type: string
+          description: Error message if query failed
+        cached:
+          type: boolean
+          description: Whether result was served from cache
+
+    BatchStats:
+      type: object
+      properties:
+        total:
+          type: integer
+          description: Total number of queries
+        success:
+          type: integer
+          description: Number of successful queries
+        errors:
+          type: integer
+          description: Number of failed queries
+        cache_hits:
+          type: integer
+          description: Number of cache hits
+        duration_ms:
+          type: integer
+          format: int64
+          description: Total processing time in milliseconds
+
+    MetaResponse:
+      type: object
+      properties:
+        component:
+          type: string
+          description: Service name
+          example: rdap-lookup
+        version:
+          type: string
+          description: Service version
+          example: 1.0.0
+        hostname:
+          type: string
+          description: Hostname of the running instance
+
+    ReadyResponse:
+      type: object
+      properties:
+        ready:
+          type: boolean
+          description: Whether service is ready
+        bootstrap:
+          type: boolean
+          description: Whether bootstrap data is loaded
+        cache:
+          type: boolean
+          description: Whether cache is available
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              description: Error code
+              enum:
+                - INVALID_REQUEST
+                - NOT_FOUND
+                - RATE_LIMITED
+                - UPSTREAM_ERROR
+                - INTERNAL_ERROR
+            message:
+              type: string
+              description: Human-readable error message
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: INVALID_REQUEST
+              message: Domain name is required
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: NOT_FOUND
+              message: Domain not found
+
+    RateLimited:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: RATE_LIMITED
+              message: Upstream RDAP server rate limit exceeded
+
+    UpstreamError:
+      description: Upstream RDAP server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: UPSTREAM_ERROR
+              message: Failed to query RDAP server
+
+tags:
+  - name: Lookup
+    description: RDAP lookup operations
+  - name: Health
+    description: Health and monitoring endpoints
