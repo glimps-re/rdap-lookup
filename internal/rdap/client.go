@@ -6,7 +6,6 @@ package rdap
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/glimps-re/rdap-lookup/internal/bootstrap"
 	"github.com/glimps-re/rdap-lookup/internal/metrics"
+	openrdap "github.com/openrdap/rdap"
 )
 
 // Common errors returned by the RDAP client.
@@ -166,7 +166,7 @@ func (c *Client) SetResolver(r *bootstrap.Resolver) {
 }
 
 // QueryDomain queries RDAP for domain information.
-func (c *Client) QueryDomain(ctx context.Context, domain string) (*DomainResponse, error) {
+func (c *Client) QueryDomain(ctx context.Context, domain string) (*openrdap.Domain, error) {
 	if domain == "" {
 		return nil, bootstrap.ErrInvalidInput
 	}
@@ -188,16 +188,21 @@ func (c *Client) QueryDomain(ctx context.Context, domain string) (*DomainRespons
 	path := "domain/" + url.PathEscape(domain)
 
 	// Try each server
-	var resp DomainResponse
-	if err := c.queryWithRetry(ctx, QueryTypeDomain, urls, path, &resp); err != nil {
+	result, err := c.queryWithRetry(ctx, QueryTypeDomain, urls, path)
+	if err != nil {
 		return nil, err
 	}
 
-	return &resp, nil
+	resp, ok := result.(*openrdap.Domain)
+	if !ok {
+		return nil, fmt.Errorf("%w: expected Domain, got %T", ErrInvalidResponse, result)
+	}
+
+	return resp, nil
 }
 
 // QueryIP queries RDAP for IP network information.
-func (c *Client) QueryIP(ctx context.Context, ip string) (*IPResponse, error) {
+func (c *Client) QueryIP(ctx context.Context, ip string) (*openrdap.IPNetwork, error) {
 	if ip == "" {
 		return nil, bootstrap.ErrInvalidInput
 	}
@@ -216,16 +221,21 @@ func (c *Client) QueryIP(ctx context.Context, ip string) (*IPResponse, error) {
 	path := "ip/" + url.PathEscape(ip)
 
 	// Try each server
-	var resp IPResponse
-	if err := c.queryWithRetry(ctx, QueryTypeIP, urls, path, &resp); err != nil {
+	result, err := c.queryWithRetry(ctx, QueryTypeIP, urls, path)
+	if err != nil {
 		return nil, err
 	}
 
-	return &resp, nil
+	resp, ok := result.(*openrdap.IPNetwork)
+	if !ok {
+		return nil, fmt.Errorf("%w: expected IPNetwork, got %T", ErrInvalidResponse, result)
+	}
+
+	return resp, nil
 }
 
 // QueryASN queries RDAP for autonomous system number information.
-func (c *Client) QueryASN(ctx context.Context, asn uint32) (*ASNResponse, error) {
+func (c *Client) QueryASN(ctx context.Context, asn uint32) (*openrdap.Autnum, error) {
 	if asn == 0 {
 		return nil, bootstrap.ErrInvalidInput
 	}
@@ -244,18 +254,23 @@ func (c *Client) QueryASN(ctx context.Context, asn uint32) (*ASNResponse, error)
 	path := fmt.Sprintf("autnum/%d", asn)
 
 	// Try each server
-	var resp ASNResponse
-	if err := c.queryWithRetry(ctx, QueryTypeASN, urls, path, &resp); err != nil {
+	result, err := c.queryWithRetry(ctx, QueryTypeASN, urls, path)
+	if err != nil {
 		return nil, err
 	}
 
-	return &resp, nil
+	resp, ok := result.(*openrdap.Autnum)
+	if !ok {
+		return nil, fmt.Errorf("%w: expected Autnum, got %T", ErrInvalidResponse, result)
+	}
+
+	return resp, nil
 }
 
 // QueryEntity queries RDAP for entity (registrar/registrant) information.
 // Note: Entity queries require a known RDAP server URL since entities
 // are not directly bootstrappable via IANA.
-func (c *Client) QueryEntity(ctx context.Context, handle string, serverURL string) (*EntityResponse, error) {
+func (c *Client) QueryEntity(ctx context.Context, handle string, serverURL string) (*openrdap.Entity, error) {
 	if handle == "" {
 		return nil, bootstrap.ErrInvalidInput
 	}
@@ -268,16 +283,21 @@ func (c *Client) QueryEntity(ctx context.Context, handle string, serverURL strin
 	path := "entity/" + url.PathEscape(handle)
 
 	// Try the server
-	var resp EntityResponse
-	if err := c.queryWithRetry(ctx, QueryTypeEntity, []string{serverURL}, path, &resp); err != nil {
+	result, err := c.queryWithRetry(ctx, QueryTypeEntity, []string{serverURL}, path)
+	if err != nil {
 		return nil, err
 	}
 
-	return &resp, nil
+	resp, ok := result.(*openrdap.Entity)
+	if !ok {
+		return nil, fmt.Errorf("%w: expected Entity, got %T", ErrInvalidResponse, result)
+	}
+
+	return resp, nil
 }
 
 // QueryNameserver queries RDAP for nameserver information.
-func (c *Client) QueryNameserver(ctx context.Context, nameserver string) (*NameserverResponse, error) {
+func (c *Client) QueryNameserver(ctx context.Context, nameserver string) (*openrdap.Nameserver, error) {
 	if nameserver == "" {
 		return nil, bootstrap.ErrInvalidInput
 	}
@@ -299,12 +319,17 @@ func (c *Client) QueryNameserver(ctx context.Context, nameserver string) (*Names
 	path := "nameserver/" + url.PathEscape(nameserver)
 
 	// Try each server
-	var resp NameserverResponse
-	if err := c.queryWithRetry(ctx, QueryTypeNameserver, urls, path, &resp); err != nil {
+	result, err := c.queryWithRetry(ctx, QueryTypeNameserver, urls, path)
+	if err != nil {
 		return nil, err
 	}
 
-	return &resp, nil
+	resp, ok := result.(*openrdap.Nameserver)
+	if !ok {
+		return nil, fmt.Errorf("%w: expected Nameserver, got %T", ErrInvalidResponse, result)
+	}
+
+	return resp, nil
 }
 
 // extractServerHost extracts the hostname from a URL for metric labels.
@@ -317,7 +342,8 @@ func extractServerHost(serverURL string) string {
 }
 
 // queryWithRetry attempts to query RDAP servers with retry logic.
-func (c *Client) queryWithRetry(ctx context.Context, queryType QueryType, serverURLs []string, path string, result any) error {
+// Returns the decoded RDAP response object (Domain, IPNetwork, Autnum, Entity, Nameserver).
+func (c *Client) queryWithRetry(ctx context.Context, queryType QueryType, serverURLs []string, path string) (any, error) {
 	var lastErr error
 
 	for _, baseURL := range serverURLs {
@@ -340,14 +366,14 @@ func (c *Client) queryWithRetry(ctx context.Context, queryType QueryType, server
 				backoff := calculateBackoff(attempt)
 				select {
 				case <-ctx.Done():
-					return ctx.Err()
+					return nil, ctx.Err()
 				case <-time.After(backoff):
 				}
 			}
 
-			err := c.doQuery(ctx, queryType, fullURL, serverHost, result)
+			result, err := c.doQuery(ctx, queryType, fullURL, serverHost)
 			if err == nil {
-				return nil
+				return result, nil
 			}
 
 			lastErr = err
@@ -356,7 +382,7 @@ func (c *Client) queryWithRetry(ctx context.Context, queryType QueryType, server
 			if errors.Is(err, ErrNotFound) ||
 				errors.Is(err, context.Canceled) ||
 				errors.Is(err, context.DeadlineExceeded) {
-				return err
+				return nil, err
 			}
 
 			c.logger.Debug("RDAP query failed, retrying",
@@ -368,19 +394,20 @@ func (c *Client) queryWithRetry(ctx context.Context, queryType QueryType, server
 	}
 
 	if lastErr != nil {
-		return fmt.Errorf("%w: %w", ErrAllServersFailed, lastErr)
+		return nil, fmt.Errorf("%w: %w", ErrAllServersFailed, lastErr)
 	}
 
-	return ErrAllServersFailed
+	return nil, ErrAllServersFailed
 }
 
 // doQuery performs a single RDAP query.
-func (c *Client) doQuery(ctx context.Context, queryType QueryType, queryURL string, serverHost string, result any) error {
+// Returns the decoded RDAP response object using the openrdap decoder.
+func (c *Client) doQuery(ctx context.Context, queryType QueryType, queryURL string, serverHost string) (any, error) {
 	start := time.Now()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, queryURL, nil)
 	if err != nil {
-		return fmt.Errorf("create request: %w", err)
+		return nil, fmt.Errorf("create request: %w", err)
 	}
 
 	req.Header.Set("Accept", "application/rdap+json, application/json")
@@ -397,9 +424,9 @@ func (c *Client) doQuery(ctx context.Context, queryType QueryType, queryURL stri
 			c.metrics.RDAPUpstreamErrorsTotal.WithLabelValues(serverHost, errorType).Inc()
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
-			return ErrRequestTimeout
+			return nil, ErrRequestTimeout
 		}
-		return fmt.Errorf("http request: %w", err)
+		return nil, fmt.Errorf("http request: %w", err)
 	}
 	defer func() {
 		_ = resp.Body.Close()
@@ -429,35 +456,35 @@ func (c *Client) doQuery(ctx context.Context, queryType QueryType, queryURL stri
 	case http.StatusOK:
 		// Success, parse response below
 	case http.StatusNotFound:
-		return ErrNotFound
+		return nil, ErrNotFound
 	case http.StatusTooManyRequests:
 		if c.metrics != nil {
 			c.metrics.RDAPUpstreamRateLimited.WithLabelValues(serverHost).Inc()
 		}
-		return ErrRateLimited
+		return nil, ErrRateLimited
 	case http.StatusBadRequest:
 		if c.metrics != nil {
 			c.metrics.RDAPUpstreamErrorsTotal.WithLabelValues(serverHost, "bad_request").Inc()
 		}
-		return fmt.Errorf("%w: bad request", ErrInvalidResponse)
+		return nil, fmt.Errorf("%w: bad request", ErrInvalidResponse)
 	default:
 		if resp.StatusCode >= 500 {
 			if c.metrics != nil {
 				c.metrics.RDAPUpstreamErrorsTotal.WithLabelValues(serverHost, "server_error").Inc()
 			}
-			return fmt.Errorf("%w: status %d", ErrServerError, resp.StatusCode)
+			return nil, fmt.Errorf("%w: status %d", ErrServerError, resp.StatusCode)
 		}
 		if c.metrics != nil {
 			c.metrics.RDAPUpstreamErrorsTotal.WithLabelValues(serverHost, "other").Inc()
 		}
-		return fmt.Errorf("%w: status %d", ErrInvalidResponse, resp.StatusCode)
+		return nil, fmt.Errorf("%w: status %d", ErrInvalidResponse, resp.StatusCode)
 	}
 
 	// Read response with size limit
 	limitedReader := io.LimitReader(resp.Body, maxResponseSize)
 	body, err := io.ReadAll(limitedReader)
 	if err != nil {
-		return fmt.Errorf("read response: %w", err)
+		return nil, fmt.Errorf("read response: %w", err)
 	}
 
 	// Record response size metric
@@ -465,10 +492,20 @@ func (c *Client) doQuery(ctx context.Context, queryType QueryType, queryURL stri
 		c.metrics.RDAPUpstreamResponseSize.WithLabelValues(serverHost).Observe(float64(len(body)))
 	}
 
-	// Parse JSON
-	if err := json.Unmarshal(body, result); err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidResponse, err)
+	// Decode using openrdap decoder (handles rdap-specific field tags and malformed data gracefully)
+	decoder := openrdap.NewDecoder(body)
+	result, err := decoder.Decode()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidResponse, err)
 	}
 
-	return nil
+	// Check if the response is an RDAP error
+	if rdapErr, ok := result.(*openrdap.Error); ok {
+		if rdapErr.ErrorCode != nil && *rdapErr.ErrorCode == 404 {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("%w: RDAP error %v: %s", ErrServerError, rdapErr.ErrorCode, rdapErr.Title)
+	}
+
+	return result, nil
 }

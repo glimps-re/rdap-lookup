@@ -2,22 +2,20 @@ package rdaplookup
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
-	"net/netip"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/glimps-re/rdap-lookup/internal/bootstrap"
+	"github.com/glimps-re/rdap-lookup/internal/cache"
+	"github.com/glimps-re/rdap-lookup/internal/rdap"
+	"github.com/glimps-re/rdap-lookup/internal/schema"
 )
 
 // Compile-time interface compliance check.
@@ -25,15 +23,14 @@ var _ RDAPClient = (*StandaloneClient)(nil)
 
 // Default configuration values for StandaloneClient.
 const (
-	DefaultStandaloneTimeout     = 10 * time.Second
-	DefaultCacheSize             = 50 * 1024 * 1024 // 50MB
-	DefaultCacheTTL              = 24 * time.Hour
-	DefaultNegativeTTL           = 1 * time.Hour
-	DefaultBootstrapRefresh      = 24 * time.Hour
-	DefaultStandaloneMaxRetries  = 2
-	DefaultStandaloneMaxEntries  = 10000
-	DefaultMaxStandaloneRespSize = 10 * 1024 * 1024 // 10MB
-	DefaultStandaloneUserAgent   = "rdaplookup-standalone/1.0"
+	DefaultStandaloneTimeout    = 10 * time.Second
+	DefaultCacheSize            = 50 * 1024 * 1024 // 50MB
+	DefaultCacheTTL             = 24 * time.Hour
+	DefaultNegativeTTL          = 1 * time.Hour
+	DefaultBootstrapRefresh     = 24 * time.Hour
+	DefaultStandaloneMaxRetries = 2
+	DefaultStandaloneMaxEntries = 10000
+	DefaultStandaloneUserAgent  = "rdaplookup-standalone/1.0"
 )
 
 // StandaloneClient performs direct RDAP lookups with built-in caching.
@@ -42,21 +39,28 @@ const (
 type StandaloneClient struct {
 	config standaloneConfig
 
-	// Bootstrap data
-	bootstrap     *bootstrapData
-	bootstrapOnce sync.Once
-	bootstrapErr  error
+	// Bootstrap
+	bootstrapLoader *bootstrap.Loader
+	resolver        *bootstrap.Resolver
+	bootstrapOnce   sync.Once
+	bootstrapErr    error
+	resolverMu      sync.RWMutex
+
+	// RDAP client
+	rdapClient *rdap.Client
 
 	// Cache
-	cache *standaloneCache
+	cache cache.Cache
 
-	// HTTP client
-	httpClient *http.Client
+	// Configuration
+	cacheTTL    time.Duration
+	negativeTTL time.Duration
 
 	// Background tasks
 	cancelFunc context.CancelFunc
 	wg         sync.WaitGroup
 	closed     atomic.Bool
+	logger     *slog.Logger
 }
 
 // standaloneConfig holds configuration for StandaloneClient.
@@ -169,28 +173,31 @@ func NewStandaloneClient(opts ...StandaloneOption) (*StandaloneClient, error) {
 	}
 
 	client := &StandaloneClient{
-		config:    cfg,
-		bootstrap: newBootstrapData(),
-		httpClient: &http.Client{
-			Timeout: cfg.timeout,
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{
-					MinVersion: tls.VersionTLS12,
-				},
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 10,
-				IdleConnTimeout:     90 * time.Second,
-			},
-		},
+		config:          cfg,
+		bootstrapLoader: bootstrap.NewLoader(cfg.timeout),
+		cacheTTL:        cfg.cacheTTL,
+		negativeTTL:     cfg.negativeTTL,
+		logger:          cfg.logger,
 	}
+
+	// Create RDAP client (resolver will be set after bootstrap loads)
+	client.rdapClient = rdap.NewClient(
+		cfg.timeout,
+		rdap.WithMaxRetries(cfg.maxRetries),
+		rdap.WithUserAgent(cfg.userAgent),
+		rdap.WithLogger(cfg.logger),
+	)
 
 	// Initialize cache if enabled
 	if cfg.cacheEnabled {
-		cache, err := newStandaloneCache(cfg.cacheSize)
+		memCache, err := cache.NewMemoryCache(cache.MemoryCacheConfig{
+			MaxEntries: DefaultStandaloneMaxEntries,
+			MaxSize:    cfg.cacheSize,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create cache: %w", err)
 		}
-		client.cache = cache
+		client.cache = memCache
 	}
 
 	// Start background refresh
@@ -227,45 +234,42 @@ func (c *StandaloneClient) LookupDomain(ctx context.Context, name string) (*Doma
 	name = strings.ToLower(strings.TrimSuffix(name, "."))
 
 	// Check cache
-	cacheKey := "domain:" + name
+	cacheKey := cache.BuildKey(cache.KeyPrefixDomain, name)
 	if c.cache != nil {
-		if entry, ok := c.cache.get(cacheKey); ok {
-			if entry.negative {
+		if entry, err := c.cache.Get(ctx, cacheKey); err == nil {
+			if entry.Negative {
 				return nil, ErrNotFound
 			}
 			var resp DomainResponse
-			if err := json.Unmarshal(entry.value, &resp); err == nil {
+			if err := json.Unmarshal(entry.Value, &resp); err == nil {
+				resp.Cached = true
 				return &resp, nil
 			}
 		}
 	}
 
-	// Resolve RDAP server
-	urls, err := c.bootstrap.resolveDomain(name)
-	if err != nil {
-		return nil, fmt.Errorf("no RDAP server for domain: %w", err)
-	}
-
 	// Query RDAP
-	path := "domain/" + url.PathEscape(name)
-	var rawResp rawDomainResponse
-	rdapURL, err := c.queryWithRetry(ctx, urls, path, &rawResp)
+	rawResp, err := c.rdapClient.QueryDomain(ctx, name)
 	if err != nil {
-		if errors.Is(err, errRDAPNotFound) && c.cache != nil {
-			// Cache negative result
-			c.cache.setNegative(cacheKey, c.config.negativeTTL)
+		if errors.Is(err, rdap.ErrNotFound) {
+			if c.cache != nil {
+				_ = c.cache.Set(ctx, cacheKey, nil, c.negativeTTL, true)
+			}
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
 
-	// Transform to simplified response
-	resp := transformDomainResponse(&rawResp, rdapURL)
+	// Transform to simplified schema
+	simple := schema.TransformDomain(rawResp, c.getRDAPServer(name, "domain"))
+
+	// Convert to public response type
+	resp := domainFromSchema(simple)
 
 	// Cache result
 	if c.cache != nil {
 		if data, err := json.Marshal(resp); err == nil {
-			c.cache.set(cacheKey, data, c.config.cacheTTL)
+			_ = c.cache.Set(ctx, cacheKey, data, c.cacheTTL, false)
 		}
 	}
 
@@ -287,44 +291,42 @@ func (c *StandaloneClient) LookupIP(ctx context.Context, addr string) (*IPRespon
 	}
 
 	// Check cache
-	cacheKey := "ip:" + addr
+	cacheKey := cache.BuildKey(cache.KeyPrefixIP, addr)
 	if c.cache != nil {
-		if entry, ok := c.cache.get(cacheKey); ok {
-			if entry.negative {
+		if entry, err := c.cache.Get(ctx, cacheKey); err == nil {
+			if entry.Negative {
 				return nil, ErrNotFound
 			}
 			var resp IPResponse
-			if err := json.Unmarshal(entry.value, &resp); err == nil {
+			if err := json.Unmarshal(entry.Value, &resp); err == nil {
+				resp.Cached = true
 				return &resp, nil
 			}
 		}
 	}
 
-	// Resolve RDAP server
-	urls, err := c.bootstrap.resolveIP(addr)
-	if err != nil {
-		return nil, fmt.Errorf("no RDAP server for IP: %w", err)
-	}
-
 	// Query RDAP
-	path := "ip/" + url.PathEscape(addr)
-	var rawResp rawIPResponse
-	rdapURL, err := c.queryWithRetry(ctx, urls, path, &rawResp)
+	rawResp, err := c.rdapClient.QueryIP(ctx, addr)
 	if err != nil {
-		if errors.Is(err, errRDAPNotFound) && c.cache != nil {
-			c.cache.setNegative(cacheKey, c.config.negativeTTL)
+		if errors.Is(err, rdap.ErrNotFound) {
+			if c.cache != nil {
+				_ = c.cache.Set(ctx, cacheKey, nil, c.negativeTTL, true)
+			}
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
 
-	// Transform to simplified response
-	resp := transformIPResponse(&rawResp, rdapURL)
+	// Transform to simplified schema
+	simple := schema.TransformIP(rawResp, c.getRDAPServer(addr, "ip"))
+
+	// Convert to public response type
+	resp := ipFromSchema(simple)
 
 	// Cache result
 	if c.cache != nil {
 		if data, err := json.Marshal(resp); err == nil {
-			c.cache.set(cacheKey, data, c.config.cacheTTL)
+			_ = c.cache.Set(ctx, cacheKey, data, c.cacheTTL, false)
 		}
 	}
 
@@ -349,44 +351,42 @@ func (c *StandaloneClient) LookupASN(ctx context.Context, asn string) (*ASNRespo
 	}
 
 	// Check cache
-	cacheKey := fmt.Sprintf("asn:%d", asnNum)
+	cacheKey := cache.BuildKey(cache.KeyPrefixASN, fmt.Sprintf("%d", asnNum))
 	if c.cache != nil {
-		if entry, ok := c.cache.get(cacheKey); ok {
-			if entry.negative {
+		if entry, err := c.cache.Get(ctx, cacheKey); err == nil {
+			if entry.Negative {
 				return nil, ErrNotFound
 			}
 			var resp ASNResponse
-			if err := json.Unmarshal(entry.value, &resp); err == nil {
+			if err := json.Unmarshal(entry.Value, &resp); err == nil {
+				resp.Cached = true
 				return &resp, nil
 			}
 		}
 	}
 
-	// Resolve RDAP server
-	urls, err := c.bootstrap.resolveASN(asnNum)
-	if err != nil {
-		return nil, fmt.Errorf("no RDAP server for ASN: %w", err)
-	}
-
 	// Query RDAP
-	path := fmt.Sprintf("autnum/%d", asnNum)
-	var rawResp rawASNResponse
-	rdapURL, err := c.queryWithRetry(ctx, urls, path, &rawResp)
+	rawResp, err := c.rdapClient.QueryASN(ctx, asnNum)
 	if err != nil {
-		if errors.Is(err, errRDAPNotFound) && c.cache != nil {
-			c.cache.setNegative(cacheKey, c.config.negativeTTL)
+		if errors.Is(err, rdap.ErrNotFound) {
+			if c.cache != nil {
+				_ = c.cache.Set(ctx, cacheKey, nil, c.negativeTTL, true)
+			}
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
 
-	// Transform to simplified response
-	resp := transformASNResponse(&rawResp, rdapURL)
+	// Transform to simplified schema
+	simple := schema.TransformASN(rawResp, c.getRDAPServer(fmt.Sprintf("%d", asnNum), "autnum"))
+
+	// Convert to public response type
+	resp := asnFromSchema(simple)
 
 	// Cache result
 	if c.cache != nil {
 		if data, err := json.Marshal(resp); err == nil {
-			c.cache.set(cacheKey, data, c.config.cacheTTL)
+			_ = c.cache.Set(ctx, cacheKey, data, c.cacheTTL, false)
 		}
 	}
 
@@ -416,49 +416,48 @@ func (c *StandaloneClient) LookupEntity(ctx context.Context, handle, serverURL s
 		return nil, errors.New("server URL required for entity lookup")
 	}
 
-	// Validate server URL format
-	if _, err := url.Parse(serverURL); err != nil {
-		return nil, fmt.Errorf("invalid server URL: %w", err)
-	}
-
 	// SSRF Prevention: Validate server URL against IANA bootstrap allowlist
-	if err := c.bootstrap.isServerAllowed(serverURL); err != nil {
+	if err := c.isServerAllowed(serverURL); err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrServerNotAllowed, serverURL)
 	}
 
 	// Check cache (include server URL in key to avoid collisions)
-	cacheKey := "entity:" + serverURL + ":" + handle
+	cacheKey := cache.BuildKey(cache.KeyPrefixEntity, serverURL+":"+handle)
 	if c.cache != nil {
-		if entry, ok := c.cache.get(cacheKey); ok {
-			if entry.negative {
+		if entry, err := c.cache.Get(ctx, cacheKey); err == nil {
+			if entry.Negative {
 				return nil, ErrNotFound
 			}
 			var resp EntityResponse
-			if err := json.Unmarshal(entry.value, &resp); err == nil {
+			if err := json.Unmarshal(entry.Value, &resp); err == nil {
+				resp.Cached = true
 				return &resp, nil
 			}
 		}
 	}
 
 	// Query RDAP
-	path := "entity/" + url.PathEscape(handle)
-	var rawResp rawEntityResponse
-	rdapURL, err := c.queryWithRetry(ctx, []string{serverURL}, path, &rawResp)
+	rawResp, err := c.rdapClient.QueryEntity(ctx, handle, serverURL)
 	if err != nil {
-		if errors.Is(err, errRDAPNotFound) && c.cache != nil {
-			c.cache.setNegative(cacheKey, c.config.negativeTTL)
+		if errors.Is(err, rdap.ErrNotFound) {
+			if c.cache != nil {
+				_ = c.cache.Set(ctx, cacheKey, nil, c.negativeTTL, true)
+			}
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
 
-	// Transform to simplified response
-	resp := transformEntityResponse(&rawResp, rdapURL)
+	// Transform to simplified schema
+	simple := schema.TransformEntityResponse(rawResp, serverURL)
+
+	// Convert to public response type
+	resp := entityFromSchema(simple)
 
 	// Cache result
 	if c.cache != nil {
 		if data, err := json.Marshal(resp); err == nil {
-			c.cache.set(cacheKey, data, c.config.cacheTTL)
+			_ = c.cache.Set(ctx, cacheKey, data, c.cacheTTL, false)
 		}
 	}
 
@@ -504,6 +503,7 @@ func (c *StandaloneClient) BatchLookup(ctx context.Context, req *BatchRequest) (
 					result.Error = err.Error()
 				} else {
 					result.Data = resp
+					result.Cached = resp.Cached
 				}
 			case "ip":
 				resp, err := c.LookupIP(ctx, q.Value)
@@ -511,6 +511,7 @@ func (c *StandaloneClient) BatchLookup(ctx context.Context, req *BatchRequest) (
 					result.Error = err.Error()
 				} else {
 					result.Data = resp
+					result.Cached = resp.Cached
 				}
 			case "asn":
 				resp, err := c.LookupASN(ctx, q.Value)
@@ -518,6 +519,7 @@ func (c *StandaloneClient) BatchLookup(ctx context.Context, req *BatchRequest) (
 					result.Error = err.Error()
 				} else {
 					result.Data = resp
+					result.Cached = resp.Cached
 				}
 			case "entity":
 				resp, err := c.LookupEntity(ctx, q.Value, q.ServerURL)
@@ -525,6 +527,7 @@ func (c *StandaloneClient) BatchLookup(ctx context.Context, req *BatchRequest) (
 					result.Error = err.Error()
 				} else {
 					result.Data = resp
+					result.Cached = resp.Cached
 				}
 			default:
 				result.Error = "unsupported query type"
@@ -537,12 +540,15 @@ func (c *StandaloneClient) BatchLookup(ctx context.Context, req *BatchRequest) (
 	wg.Wait()
 
 	// Calculate stats
-	var success, errs int
+	var success, errs, cacheHits int
 	for _, r := range results {
 		if r.Error != "" {
 			errs++
 		} else {
 			success++
+			if r.Cached {
+				cacheHits++
+			}
 		}
 	}
 
@@ -552,6 +558,7 @@ func (c *StandaloneClient) BatchLookup(ctx context.Context, req *BatchRequest) (
 			Total:      len(results),
 			Success:    success,
 			Errors:     errs,
+			CacheHits:  cacheHits,
 			DurationMs: time.Since(start).Milliseconds(),
 		},
 	}, nil
@@ -569,9 +576,9 @@ func (c *StandaloneClient) Close() error {
 	}
 	c.wg.Wait()
 
-	// Clear cache
+	// Close cache
 	if c.cache != nil {
-		c.cache.clear()
+		_ = c.cache.Close()
 	}
 
 	return nil
@@ -582,20 +589,66 @@ func (c *StandaloneClient) Stats() CacheStats {
 	if c.cache == nil {
 		return CacheStats{}
 	}
-	return c.cache.stats()
+	stats := c.cache.Stats()
+	return CacheStats{
+		Hits:      stats.Hits,
+		Misses:    stats.Misses,
+		Entries:   stats.Entries,
+		SizeBytes: stats.SizeBytes,
+		Evictions: stats.Evictions,
+		HitRate:   stats.HitRate,
+	}
+}
+
+// CacheStats represents cache statistics.
+type CacheStats struct {
+	Hits      uint64  `json:"hits"`
+	Misses    uint64  `json:"misses"`
+	Entries   int     `json:"entries"`
+	SizeBytes int64   `json:"size_bytes"`
+	Evictions uint64  `json:"evictions"`
+	HitRate   float64 `json:"hit_rate"`
 }
 
 // IsReady returns true if bootstrap data has been loaded.
 func (c *StandaloneClient) IsReady() bool {
-	return c.bootstrap.isLoaded()
+	c.resolverMu.RLock()
+	defer c.resolverMu.RUnlock()
+	return c.resolver != nil
 }
 
 // ensureBootstrap ensures bootstrap data is loaded.
 func (c *StandaloneClient) ensureBootstrap(ctx context.Context) error {
 	c.bootstrapOnce.Do(func() {
-		c.bootstrapErr = c.bootstrap.load(ctx, c.httpClient, c.config.logger)
+		c.bootstrapErr = c.loadBootstrap(ctx)
 	})
 	return c.bootstrapErr
+}
+
+// loadBootstrap loads the IANA bootstrap data.
+func (c *StandaloneClient) loadBootstrap(ctx context.Context) error {
+	bootstrapData, err := c.bootstrapLoader.LoadAll(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to load bootstrap data: %w", err)
+	}
+
+	resolver := bootstrap.NewResolver(bootstrapData)
+
+	c.resolverMu.Lock()
+	c.resolver = resolver
+	c.resolverMu.Unlock()
+
+	// Update RDAP client with the resolver
+	c.rdapClient.SetResolver(resolver)
+
+	c.logger.Info("bootstrap data loaded",
+		slog.Int("tlds", bootstrapData.DNS.TLDCount()),
+		slog.Int("ipv4_prefixes", bootstrapData.IPv4.PrefixCount()),
+		slog.Int("ipv6_prefixes", bootstrapData.IPv6.PrefixCount()),
+		slog.Int("asn_ranges", bootstrapData.ASN.RangeCount()),
+	)
+
+	return nil
 }
 
 // backgroundRefresh periodically refreshes bootstrap data.
@@ -610,123 +663,90 @@ func (c *StandaloneClient) backgroundRefresh(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := c.bootstrap.load(ctx, c.httpClient, c.config.logger); err != nil {
-				c.config.logger.Warn("failed to refresh bootstrap data",
+			refreshCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+			bootstrapData, err := c.bootstrapLoader.LoadAll(refreshCtx)
+			cancel()
+
+			if err != nil {
+				c.logger.Warn("failed to refresh bootstrap data",
 					slog.String("error", err.Error()),
 				)
+				continue
 			}
+
+			resolver := bootstrap.NewResolver(bootstrapData)
+
+			c.resolverMu.Lock()
+			c.resolver = resolver
+			c.resolverMu.Unlock()
+
+			c.rdapClient.SetResolver(resolver)
+
+			c.logger.Debug("bootstrap data refreshed")
 		}
 	}
 }
 
-// queryWithRetry attempts to query RDAP servers with retry logic.
-func (c *StandaloneClient) queryWithRetry(ctx context.Context, serverURLs []string, path string, result any) (string, error) {
-	var lastErr error
+// getRDAPServer returns the RDAP server URL for the query.
+func (c *StandaloneClient) getRDAPServer(query, queryType string) string {
+	c.resolverMu.RLock()
+	resolver := c.resolver
+	c.resolverMu.RUnlock()
 
-	for _, baseURL := range serverURLs {
-		if !strings.HasSuffix(baseURL, "/") {
-			baseURL += "/"
-		}
+	if resolver == nil {
+		return ""
+	}
 
-		fullURL := baseURL + path
+	var urls []string
+	var err error
 
-		for attempt := 0; attempt <= c.config.maxRetries; attempt++ {
-			if attempt > 0 {
-				backoff := calculateStandaloneBackoff(attempt)
-				select {
-				case <-ctx.Done():
-					return "", ctx.Err()
-				case <-time.After(backoff):
-				}
-			}
-
-			err := c.doQuery(ctx, fullURL, result)
-			if err == nil {
-				return baseURL, nil
-			}
-
-			lastErr = err
-
-			// Don't retry on certain errors
-			if errors.Is(err, errRDAPNotFound) ||
-				errors.Is(err, context.Canceled) ||
-				errors.Is(err, context.DeadlineExceeded) {
-				return "", err
-			}
+	switch queryType {
+	case "domain":
+		urls, err = resolver.ResolveDomain(query)
+	case "ip":
+		urls, err = resolver.ResolveIP(query)
+	case "autnum":
+		if asn, parseErr := parseASN(query); parseErr == nil {
+			urls, err = resolver.ResolveASN(asn)
 		}
 	}
 
-	if lastErr != nil {
-		return "", lastErr
+	if err != nil || len(urls) == 0 {
+		return ""
 	}
-	return "", errors.New("all RDAP servers failed")
+
+	return urls[0]
 }
 
-// doQuery performs a single RDAP query.
-func (c *StandaloneClient) doQuery(ctx context.Context, queryURL string, result any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, queryURL, nil)
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
+// isServerAllowed checks if a server URL is in the IANA bootstrap allowlist.
+func (c *StandaloneClient) isServerAllowed(serverURL string) error {
+	c.resolverMu.RLock()
+	resolver := c.resolver
+	c.resolverMu.RUnlock()
+
+	if resolver == nil {
+		return errors.New("bootstrap data not loaded")
 	}
 
-	req.Header.Set("Accept", "application/rdap+json, application/json")
-	req.Header.Set("User-Agent", c.config.userAgent)
+	// Get all allowed servers and check if this one is in the list
+	allowedServers := resolver.GetAllRDAPServers()
+	normalizedURL := normalizeServerURL(serverURL)
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return ErrTimeout
+	for _, allowed := range allowedServers {
+		if normalizeServerURL(allowed) == normalizedURL {
+			return nil
 		}
-		return fmt.Errorf("http request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	switch resp.StatusCode {
-	case http.StatusOK:
-		// Success
-	case http.StatusNotFound:
-		return errRDAPNotFound
-	case http.StatusTooManyRequests:
-		return ErrRateLimited
-	default:
-		if resp.StatusCode >= 500 {
-			return fmt.Errorf("server error: status %d", resp.StatusCode)
-		}
-		return fmt.Errorf("unexpected status: %d", resp.StatusCode)
 	}
 
-	// Read response with size limit
-	limitedReader := io.LimitReader(resp.Body, DefaultMaxStandaloneRespSize)
-	body, err := io.ReadAll(limitedReader)
-	if err != nil {
-		return fmt.Errorf("read response: %w", err)
-	}
-
-	if err := json.Unmarshal(body, result); err != nil {
-		return fmt.Errorf("parse response: %w", err)
-	}
-
-	return nil
+	return errors.New("server not in allowlist")
 }
 
-// Internal error for not found
-var errRDAPNotFound = errors.New("object not found in RDAP")
-
-// calculateStandaloneBackoff returns backoff duration for retry.
-func calculateStandaloneBackoff(attempt int) time.Duration {
-	backoffs := []time.Duration{
-		100 * time.Millisecond,
-		200 * time.Millisecond,
-		400 * time.Millisecond,
-		800 * time.Millisecond,
-	}
-	if attempt <= 0 {
-		return backoffs[0]
-	}
-	if attempt >= len(backoffs) {
-		return backoffs[len(backoffs)-1]
-	}
-	return backoffs[attempt-1]
+// normalizeServerURL normalizes a server URL for comparison.
+func normalizeServerURL(serverURL string) string {
+	serverURL = strings.TrimSpace(serverURL)
+	serverURL = strings.ToLower(serverURL)
+	serverURL = strings.TrimSuffix(serverURL, "/")
+	return serverURL
 }
 
 // parseASN parses an ASN string to uint32.
@@ -741,356 +761,4 @@ func parseASN(s string) (uint32, error) {
 		return 0, errors.New("ASN cannot be zero")
 	}
 	return uint32(n), nil
-}
-
-// CacheStats represents cache statistics.
-type CacheStats struct {
-	Hits      uint64  `json:"hits"`
-	Misses    uint64  `json:"misses"`
-	Entries   int     `json:"entries"`
-	SizeBytes int64   `json:"size_bytes"`
-	Evictions uint64  `json:"evictions"`
-	HitRate   float64 `json:"hit_rate"`
-}
-
-// standaloneCache is an LRU cache with TTL support.
-type standaloneCache struct {
-	cache     *lru.Cache[string, *cacheEntry]
-	maxSize   int64
-	sizeBytes atomic.Int64
-	hits      atomic.Uint64
-	misses    atomic.Uint64
-	evictions atomic.Uint64
-	mu        sync.RWMutex
-}
-
-type cacheEntry struct {
-	value     []byte
-	expiresAt time.Time
-	negative  bool
-}
-
-func newStandaloneCache(maxSize int64) (*standaloneCache, error) {
-	sc := &standaloneCache{
-		maxSize: maxSize,
-	}
-
-	cache, err := lru.NewWithEvict[string, *cacheEntry](DefaultStandaloneMaxEntries, sc.onEvict)
-	if err != nil {
-		return nil, err
-	}
-	sc.cache = cache
-
-	return sc, nil
-}
-
-func (c *standaloneCache) onEvict(_ string, entry *cacheEntry) {
-	if entry != nil {
-		c.sizeBytes.Add(-int64(len(entry.value)))
-		c.evictions.Add(1)
-	}
-}
-
-func (c *standaloneCache) get(key string) (*cacheEntry, bool) {
-	c.mu.RLock()
-	entry, ok := c.cache.Get(key)
-	c.mu.RUnlock()
-
-	if !ok {
-		c.misses.Add(1)
-		return nil, false
-	}
-
-	if time.Now().After(entry.expiresAt) {
-		c.mu.Lock()
-		c.cache.Remove(key)
-		c.sizeBytes.Add(-int64(len(entry.value)))
-		c.mu.Unlock()
-		c.misses.Add(1)
-		return nil, false
-	}
-
-	c.hits.Add(1)
-	return entry, true
-}
-
-func (c *standaloneCache) set(key string, value []byte, ttl time.Duration) {
-	entry := &cacheEntry{
-		value:     value,
-		expiresAt: time.Now().Add(ttl),
-		negative:  false,
-	}
-
-	entrySize := int64(len(value))
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.maxSize > 0 {
-		if old, ok := c.cache.Peek(key); ok {
-			c.sizeBytes.Add(-int64(len(old.value)))
-		}
-
-		for c.sizeBytes.Load()+entrySize > c.maxSize && c.cache.Len() > 0 {
-			c.cache.RemoveOldest()
-		}
-	}
-
-	c.cache.Add(key, entry)
-	c.sizeBytes.Add(entrySize)
-}
-
-func (c *standaloneCache) setNegative(key string, ttl time.Duration) {
-	entry := &cacheEntry{
-		value:     nil,
-		expiresAt: time.Now().Add(ttl),
-		negative:  true,
-	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.cache.Add(key, entry)
-}
-
-func (c *standaloneCache) clear() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.cache.Purge()
-	c.sizeBytes.Store(0)
-}
-
-func (c *standaloneCache) stats() CacheStats {
-	hits := c.hits.Load()
-	misses := c.misses.Load()
-	total := hits + misses
-
-	var hitRate float64
-	if total > 0 {
-		hitRate = float64(hits) / float64(total)
-	}
-
-	c.mu.RLock()
-	entries := c.cache.Len()
-	c.mu.RUnlock()
-
-	return CacheStats{
-		Hits:      hits,
-		Misses:    misses,
-		Entries:   entries,
-		SizeBytes: c.sizeBytes.Load(),
-		Evictions: c.evictions.Load(),
-		HitRate:   hitRate,
-	}
-}
-
-// bootstrapData holds IANA bootstrap information.
-type bootstrapData struct {
-	dns struct {
-		tldToURLs map[string][]string
-	}
-	ipv4 struct {
-		prefixes []ipv4Entry
-	}
-	ipv6 struct {
-		prefixes []ipv6Entry
-	}
-	asn struct {
-		ranges []asnEntry
-	}
-	// allowedServers contains normalized hostnames from all bootstrap data
-	// for SSRF prevention in entity lookups.
-	allowedServers map[string]struct{}
-	loaded         atomic.Bool
-	mu             sync.RWMutex
-}
-
-type ipv4Entry struct {
-	prefix netip.Prefix
-	urls   []string
-}
-
-type ipv6Entry struct {
-	prefix netip.Prefix
-	urls   []string
-}
-
-type asnEntry struct {
-	start uint32
-	end   uint32
-	urls  []string
-}
-
-func newBootstrapData() *bootstrapData {
-	return &bootstrapData{
-		allowedServers: make(map[string]struct{}),
-	}
-}
-
-func (b *bootstrapData) isLoaded() bool {
-	return b.loaded.Load()
-}
-
-func (b *bootstrapData) resolveDomain(domain string) ([]string, error) {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
-	if len(b.dns.tldToURLs) == 0 {
-		return nil, errors.New("bootstrap data not loaded")
-	}
-
-	// Extract TLD
-	tld := extractTLD(domain)
-	if tld == "" {
-		return nil, errors.New("invalid domain")
-	}
-
-	urls, ok := b.dns.tldToURLs[strings.ToLower(tld)]
-	if !ok {
-		return nil, fmt.Errorf("no RDAP server for TLD: %s", tld)
-	}
-
-	return urls, nil
-}
-
-func (b *bootstrapData) resolveIP(addrStr string) ([]string, error) {
-	addr, err := netip.ParseAddr(addrStr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid IP address: %w", err)
-	}
-
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
-	if addr.Is4() {
-		if len(b.ipv4.prefixes) == 0 {
-			return nil, errors.New("IPv4 bootstrap data not loaded")
-		}
-
-		var bestMatch *ipv4Entry
-		var bestBits int
-
-		for i := range b.ipv4.prefixes {
-			entry := &b.ipv4.prefixes[i]
-			if entry.prefix.Contains(addr) {
-				bits := entry.prefix.Bits()
-				if bestMatch == nil || bits > bestBits {
-					bestMatch = entry
-					bestBits = bits
-				}
-			}
-		}
-
-		if bestMatch == nil {
-			return nil, fmt.Errorf("no RDAP server for IP: %s", addrStr)
-		}
-		return bestMatch.urls, nil
-	}
-
-	// IPv6
-	if len(b.ipv6.prefixes) == 0 {
-		return nil, errors.New("IPv6 bootstrap data not loaded")
-	}
-
-	var bestMatch *ipv6Entry
-	var bestBits int
-
-	for i := range b.ipv6.prefixes {
-		entry := &b.ipv6.prefixes[i]
-		if entry.prefix.Contains(addr) {
-			bits := entry.prefix.Bits()
-			if bestMatch == nil || bits > bestBits {
-				bestMatch = entry
-				bestBits = bits
-			}
-		}
-	}
-
-	if bestMatch == nil {
-		return nil, fmt.Errorf("no RDAP server for IP: %s", addrStr)
-	}
-	return bestMatch.urls, nil
-}
-
-func (b *bootstrapData) resolveASN(asn uint32) ([]string, error) {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
-	if len(b.asn.ranges) == 0 {
-		return nil, errors.New("ASN bootstrap data not loaded")
-	}
-
-	for i := range b.asn.ranges {
-		entry := &b.asn.ranges[i]
-		if asn >= entry.start && asn <= entry.end {
-			return entry.urls, nil
-		}
-	}
-
-	return nil, fmt.Errorf("no RDAP server for ASN: %d", asn)
-}
-
-// isServerAllowed checks if a server URL is in the IANA bootstrap allowlist.
-// This prevents SSRF attacks by ensuring only known RDAP servers can be queried.
-func (b *bootstrapData) isServerAllowed(serverURL string) error {
-	if serverURL == "" {
-		return errors.New("empty server URL")
-	}
-
-	normalized, err := normalizeServerHost(serverURL)
-	if err != nil {
-		return err
-	}
-
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
-	if len(b.allowedServers) == 0 {
-		return errors.New("bootstrap data not loaded")
-	}
-
-	if _, ok := b.allowedServers[normalized]; !ok {
-		return errors.New("server not in allowlist")
-	}
-
-	return nil
-}
-
-// normalizeServerHost extracts and normalizes the host from a server URL.
-func normalizeServerHost(serverURL string) (string, error) {
-	// Ensure URL has a scheme for proper parsing
-	urlToParse := serverURL
-	if !strings.HasPrefix(urlToParse, "http://") && !strings.HasPrefix(urlToParse, "https://") {
-		urlToParse = "https://" + urlToParse
-	}
-
-	parsed, err := url.Parse(urlToParse)
-	if err != nil {
-		return "", fmt.Errorf("invalid URL: %w", err)
-	}
-
-	host := strings.ToLower(parsed.Host)
-	if host == "" {
-		return "", errors.New("empty host in URL")
-	}
-
-	// Remove default ports
-	host = strings.TrimSuffix(host, ":443")
-	host = strings.TrimSuffix(host, ":80")
-
-	return host, nil
-}
-
-func extractTLD(domain string) string {
-	domain = strings.TrimSuffix(domain, ".")
-	if domain == "" {
-		return ""
-	}
-
-	lastDot := strings.LastIndex(domain, ".")
-	if lastDot == -1 {
-		return domain
-	}
-
-	return domain[lastDot+1:]
 }

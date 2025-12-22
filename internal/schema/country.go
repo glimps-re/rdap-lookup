@@ -3,12 +3,12 @@ package schema
 import (
 	"strings"
 
-	"github.com/glimps-re/rdap-lookup/internal/rdap"
+	openrdap "github.com/openrdap/rdap"
 )
 
 // ExtractCountryFromDomain extracts the country from a domain response.
 // Priority: registrant vCard country > admin contact country > tech contact country.
-func ExtractCountryFromDomain(resp *rdap.DomainResponse) string {
+func ExtractCountryFromDomain(resp *openrdap.Domain) string {
 	if resp == nil {
 		return ""
 	}
@@ -17,10 +17,10 @@ func ExtractCountryFromDomain(resp *rdap.DomainResponse) string {
 	priorities := []string{"registrant", "administrative", "technical"}
 
 	for _, priority := range priorities {
-		for _, entity := range resp.Entities {
-			for _, role := range entity.Roles {
+		for i := range resp.Entities {
+			for _, role := range resp.Entities[i].Roles {
 				if role == priority {
-					country := extractCountryFromEntity(&entity)
+					country := extractCountryFromEntity(&resp.Entities[i])
 					if country != "" {
 						return country
 					}
@@ -34,7 +34,7 @@ func ExtractCountryFromDomain(resp *rdap.DomainResponse) string {
 
 // ExtractCountryFromIP extracts the country from an IP response.
 // Priority: IP country field > registrant vCard country > abuse contact country.
-func ExtractCountryFromIP(resp *rdap.IPResponse) string {
+func ExtractCountryFromIP(resp *openrdap.IPNetwork) string {
 	if resp == nil {
 		return ""
 	}
@@ -48,10 +48,10 @@ func ExtractCountryFromIP(resp *rdap.IPResponse) string {
 	priorities := []string{"registrant", "abuse", "administrative", "technical"}
 
 	for _, priority := range priorities {
-		for _, entity := range resp.Entities {
-			for _, role := range entity.Roles {
+		for i := range resp.Entities {
+			for _, role := range resp.Entities[i].Roles {
 				if role == priority {
-					country := extractCountryFromEntity(&entity)
+					country := extractCountryFromEntity(&resp.Entities[i])
 					if country != "" {
 						return country
 					}
@@ -65,7 +65,7 @@ func ExtractCountryFromIP(resp *rdap.IPResponse) string {
 
 // ExtractCountryFromASN extracts the country from an ASN response.
 // Priority: ASN country field > registrant vCard country > admin contact country.
-func ExtractCountryFromASN(resp *rdap.ASNResponse) string {
+func ExtractCountryFromASN(resp *openrdap.Autnum) string {
 	if resp == nil {
 		return ""
 	}
@@ -79,10 +79,10 @@ func ExtractCountryFromASN(resp *rdap.ASNResponse) string {
 	priorities := []string{"registrant", "administrative", "technical", "abuse"}
 
 	for _, priority := range priorities {
-		for _, entity := range resp.Entities {
-			for _, role := range entity.Roles {
+		for i := range resp.Entities {
+			for _, role := range resp.Entities[i].Roles {
 				if role == priority {
-					country := extractCountryFromEntity(&entity)
+					country := extractCountryFromEntity(&resp.Entities[i])
 					if country != "" {
 						return country
 					}
@@ -95,22 +95,21 @@ func ExtractCountryFromASN(resp *rdap.ASNResponse) string {
 }
 
 // ExtractCountryFromEntityResponse extracts the country from an entity response.
-func ExtractCountryFromEntityResponse(resp *rdap.EntityResponse) string {
+func ExtractCountryFromEntityResponse(resp *openrdap.Entity) string {
 	if resp == nil {
 		return ""
 	}
 
-	// Parse the entity's own vCard
-	if len(resp.VCardArray) > 0 {
-		contact := ParseVCard(resp.VCardArray)
-		if contact.Country != "" {
-			return normalizeCountry(contact.Country)
+	// Extract country from VCard
+	if resp.VCard != nil {
+		if country := resp.VCard.Country(); country != "" {
+			return normalizeCountry(country)
 		}
 	}
 
 	// Check nested entities
-	for _, entity := range resp.Entities {
-		country := extractCountryFromEntity(&entity)
+	for i := range resp.Entities {
+		country := extractCountryFromEntity(&resp.Entities[i])
 		if country != "" {
 			return country
 		}
@@ -138,27 +137,26 @@ func ExtractCountryFromEntityResponse(resp *rdap.EntityResponse) string {
 const maxEntityDepth = 10
 
 // extractCountryFromEntity extracts country from a single entity.
-func extractCountryFromEntity(entity *rdap.Entity) string {
+func extractCountryFromEntity(entity *openrdap.Entity) string {
 	return extractCountryFromEntityWithDepth(entity, 0)
 }
 
 // extractCountryFromEntityWithDepth extracts country with recursion depth tracking.
-func extractCountryFromEntityWithDepth(entity *rdap.Entity, depth int) string {
+func extractCountryFromEntityWithDepth(entity *openrdap.Entity, depth int) string {
 	if entity == nil || depth > maxEntityDepth {
 		return ""
 	}
 
-	// Parse vCard
-	if len(entity.VCardArray) > 0 {
-		contact := ParseVCard(entity.VCardArray)
-		if contact.Country != "" {
-			return normalizeCountry(contact.Country)
+	// Extract country from VCard
+	if entity.VCard != nil {
+		if country := entity.VCard.Country(); country != "" {
+			return normalizeCountry(country)
 		}
 	}
 
 	// Check nested entities recursively with depth limit
-	for _, nested := range entity.Entities {
-		country := extractCountryFromEntityWithDepth(&nested, depth+1)
+	for i := range entity.Entities {
+		country := extractCountryFromEntityWithDepth(&entity.Entities[i], depth+1)
 		if country != "" {
 			return country
 		}

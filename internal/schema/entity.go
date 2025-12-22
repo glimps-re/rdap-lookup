@@ -1,26 +1,26 @@
 package schema
 
 import (
-	"github.com/glimps-re/rdap-lookup/internal/rdap"
+	openrdap "github.com/openrdap/rdap"
 )
 
 // SimpleEntityFull represents a full simplified entity response (for entity queries).
 type SimpleEntityFull struct {
-	Handle        string               `json:"handle"`
-	Name          string               `json:"name,omitempty"`
-	Organization  string               `json:"organization,omitempty"`
-	Email         string               `json:"email,omitempty"`
-	Phone         string               `json:"phone,omitempty"`
-	Address       string               `json:"address,omitempty"`
-	Country       string               `json:"country,omitempty"`
-	Roles         []string             `json:"roles,omitempty"`
-	Status        []string             `json:"status,omitempty"`
-	CreatedDate   string               `json:"created_date,omitempty"`
-	UpdatedDate   string               `json:"updated_date,omitempty"`
-	RelatedIPNets []SimpleIPSummary    `json:"related_ip_networks,omitempty"`
-	RelatedASNs   []SimpleASNSummary   `json:"related_asns,omitempty"`
-	RDAPServer    string               `json:"rdap_server,omitempty"`
-	Raw           *rdap.EntityResponse `json:"-"`
+	Handle        string             `json:"handle"`
+	Name          string             `json:"name,omitempty"`
+	Organization  string             `json:"organization,omitempty"`
+	Email         string             `json:"email,omitempty"`
+	Phone         string             `json:"phone,omitempty"`
+	Address       string             `json:"address,omitempty"`
+	Country       string             `json:"country,omitempty"`
+	Roles         []string           `json:"roles,omitempty"`
+	Status        []string           `json:"status,omitempty"`
+	CreatedDate   string             `json:"created_date,omitempty"`
+	UpdatedDate   string             `json:"updated_date,omitempty"`
+	RelatedIPNets []SimpleIPSummary  `json:"related_ip_networks,omitempty"`
+	RelatedASNs   []SimpleASNSummary `json:"related_asns,omitempty"`
+	RDAPServer    string             `json:"rdap_server,omitempty"`
+	Raw           *openrdap.Entity   `json:"-"`
 }
 
 // SimpleIPSummary represents a summary of an IP network related to an entity.
@@ -41,7 +41,7 @@ type SimpleASNSummary struct {
 }
 
 // TransformEntityResponse transforms an RDAP entity response to a simplified entity.
-func TransformEntityResponse(resp *rdap.EntityResponse, rdapServer string) *SimpleEntityFull {
+func TransformEntityResponse(resp *openrdap.Entity, rdapServer string) *SimpleEntityFull {
 	if resp == nil {
 		return nil
 	}
@@ -54,24 +54,23 @@ func TransformEntityResponse(resp *rdap.EntityResponse, rdapServer string) *Simp
 		Raw:        resp,
 	}
 
-	// Parse vCard if available
-	if len(resp.VCardArray) > 0 {
-		contact := ParseVCard(resp.VCardArray)
-		entity.Name = contact.Name
-		entity.Organization = contact.Organization
-		entity.Email = contact.Email
-		entity.Phone = contact.Phone
-		entity.Address = contact.Address
-		entity.Country = contact.Country
+	// Extract contact info from VCard if available
+	if resp.VCard != nil {
+		entity.Name = resp.VCard.Name()
+		entity.Organization = getVCardFirstValue(resp.VCard, "org")
+		entity.Email = resp.VCard.Email()
+		entity.Phone = resp.VCard.Tel()
+		entity.Country = resp.VCard.Country()
+		entity.Address = buildAddress(resp.VCard)
 	}
 
 	// Extract dates from events
 	for _, event := range resp.Events {
-		switch event.EventAction {
+		switch event.Action {
 		case "registration":
-			entity.CreatedDate = formatEventDate(event.EventDate)
+			entity.CreatedDate = formatEventDate(event.Date)
 		case "last changed":
-			entity.UpdatedDate = formatEventDate(event.EventDate)
+			entity.UpdatedDate = formatEventDate(event.Date)
 		}
 	}
 
@@ -90,10 +89,12 @@ func TransformEntityResponse(resp *rdap.EntityResponse, rdapServer string) *Simp
 	// Extract related ASNs
 	for _, autnum := range resp.Autnums {
 		summary := SimpleASNSummary{
-			ASN:     autnum.StartAutnum,
 			Handle:  autnum.Handle,
 			Name:    autnum.Name,
 			Country: autnum.Country,
+		}
+		if autnum.StartAutnum != nil {
+			summary.ASN = *autnum.StartAutnum
 		}
 		entity.RelatedASNs = append(entity.RelatedASNs, summary)
 	}

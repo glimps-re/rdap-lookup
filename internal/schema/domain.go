@@ -3,25 +3,25 @@ package schema
 import (
 	"time"
 
-	"github.com/glimps-re/rdap-lookup/internal/rdap"
+	openrdap "github.com/openrdap/rdap"
 )
 
 // SimpleDomain represents a simplified domain response.
 type SimpleDomain struct {
-	Name           string               `json:"name"`
-	UnicodeName    string               `json:"unicode_name,omitempty"`
-	Status         []string             `json:"status,omitempty"`
-	Registrar      *SimpleEntity        `json:"registrar,omitempty"`
-	Registrant     *SimpleEntity        `json:"registrant,omitempty"`
-	AdminContact   *SimpleEntity        `json:"admin_contact,omitempty"`
-	TechContact    *SimpleEntity        `json:"tech_contact,omitempty"`
-	Nameservers    []SimpleNS           `json:"nameservers,omitempty"`
-	CreatedDate    string               `json:"created_date,omitempty"`
-	UpdatedDate    string               `json:"updated_date,omitempty"`
-	ExpirationDate string               `json:"expiration_date,omitempty"`
-	DNSSEC         *SimpleDNSSEC        `json:"dnssec,omitempty"`
-	RDAPServer     string               `json:"rdap_server,omitempty"`
-	Raw            *rdap.DomainResponse `json:"-"`
+	Name           string           `json:"name"`
+	UnicodeName    string           `json:"unicode_name,omitempty"`
+	Status         []string         `json:"status,omitempty"`
+	Registrar      *SimpleEntity    `json:"registrar,omitempty"`
+	Registrant     *SimpleEntity    `json:"registrant,omitempty"`
+	AdminContact   *SimpleEntity    `json:"admin_contact,omitempty"`
+	TechContact    *SimpleEntity    `json:"tech_contact,omitempty"`
+	Nameservers    []SimpleNS       `json:"nameservers,omitempty"`
+	CreatedDate    string           `json:"created_date,omitempty"`
+	UpdatedDate    string           `json:"updated_date,omitempty"`
+	ExpirationDate string           `json:"expiration_date,omitempty"`
+	DNSSEC         *SimpleDNSSEC    `json:"dnssec,omitempty"`
+	RDAPServer     string           `json:"rdap_server,omitempty"`
+	Raw            *openrdap.Domain `json:"-"`
 }
 
 // SimpleNS represents a simplified nameserver.
@@ -51,7 +51,7 @@ type SimpleEntity struct {
 }
 
 // TransformDomain transforms an RDAP domain response to a simplified domain.
-func TransformDomain(resp *rdap.DomainResponse, rdapServer string) *SimpleDomain {
+func TransformDomain(resp *openrdap.Domain, rdapServer string) *SimpleDomain {
 	if resp == nil {
 		return nil
 	}
@@ -66,15 +66,15 @@ func TransformDomain(resp *rdap.DomainResponse, rdapServer string) *SimpleDomain
 
 	// Extract dates from events
 	for _, event := range resp.Events {
-		switch event.EventAction {
+		switch event.Action {
 		case "registration":
-			domain.CreatedDate = formatEventDate(event.EventDate)
+			domain.CreatedDate = formatEventDate(event.Date)
 		case "last changed", "last update of RDAP database":
 			if domain.UpdatedDate == "" {
-				domain.UpdatedDate = formatEventDate(event.EventDate)
+				domain.UpdatedDate = formatEventDate(event.Date)
 			}
 		case "expiration":
-			domain.ExpirationDate = formatEventDate(event.EventDate)
+			domain.ExpirationDate = formatEventDate(event.Date)
 		}
 	}
 
@@ -127,7 +127,7 @@ func TransformDomain(resp *rdap.DomainResponse, rdapServer string) *SimpleDomain
 }
 
 // transformEntity transforms an RDAP entity to a simplified entity.
-func transformEntity(entity *rdap.Entity) *SimpleEntity {
+func transformEntity(entity *openrdap.Entity) *SimpleEntity {
 	if entity == nil {
 		return nil
 	}
@@ -137,18 +137,62 @@ func transformEntity(entity *rdap.Entity) *SimpleEntity {
 		Roles:  entity.Roles,
 	}
 
-	// Parse vCard if available
-	if len(entity.VCardArray) > 0 {
-		contact := ParseVCard(entity.VCardArray)
-		simple.Name = contact.Name
-		simple.Organization = contact.Organization
-		simple.Email = contact.Email
-		simple.Phone = contact.Phone
-		simple.Address = contact.Address
-		simple.Country = contact.Country
+	// Extract contact info from VCard if available
+	if entity.VCard != nil {
+		simple.Name = entity.VCard.Name()
+		simple.Organization = getVCardFirstValue(entity.VCard, "org")
+		simple.Email = entity.VCard.Email()
+		simple.Phone = entity.VCard.Tel()
+		simple.Country = entity.VCard.Country()
+		// Build address from components
+		simple.Address = buildAddress(entity.VCard)
 	}
 
 	return simple
+}
+
+// buildAddress builds a formatted address from VCard components.
+func buildAddress(vcard *openrdap.VCard) string {
+	var parts []string
+
+	if street := vcard.StreetAddress(); street != "" {
+		parts = append(parts, street)
+	}
+	if locality := vcard.Locality(); locality != "" {
+		parts = append(parts, locality)
+	}
+	if region := vcard.Region(); region != "" {
+		parts = append(parts, region)
+	}
+	if postal := vcard.PostalCode(); postal != "" {
+		parts = append(parts, postal)
+	}
+	if country := vcard.Country(); country != "" {
+		parts = append(parts, country)
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	result := parts[0]
+	for i := 1; i < len(parts); i++ {
+		result += ", " + parts[i]
+	}
+	return result
+}
+
+// getVCardFirstValue retrieves the first value for a vCard property by name.
+func getVCardFirstValue(vcard *openrdap.VCard, name string) string {
+	prop := vcard.GetFirst(name)
+	if prop == nil {
+		return ""
+	}
+	values := prop.Values()
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
 }
 
 // formatEventDate formats an event date string to a consistent format.

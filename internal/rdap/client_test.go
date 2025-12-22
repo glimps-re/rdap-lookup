@@ -3,7 +3,6 @@ package rdap
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -42,16 +41,14 @@ func TestClient_QueryDomain(t *testing.T) {
 	// Create mock RDAP server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/domain/example.com" {
-			resp := DomainResponse{
-				ObjectClassName: "domain",
-				LDHName:         "example.com",
-				Handle:          "DOM123",
-				Status:          Status{"active"},
-			}
+			// Return raw RDAP JSON format expected by openrdap decoder
 			w.Header().Set("Content-Type", "application/rdap+json")
-			if err := json.NewEncoder(w).Encode(resp); err != nil {
-				t.Errorf("encode error: %v", err)
-			}
+			_, _ = w.Write([]byte(`{
+				"objectClassName": "domain",
+				"ldhName": "example.com",
+				"handle": "DOM123",
+				"status": ["active"]
+			}`))
 			return
 		}
 		if r.URL.Path == "/domain/notfound.com" {
@@ -88,7 +85,14 @@ func TestClient_QueryDomain(t *testing.T) {
 		if resp.Handle != "DOM123" {
 			t.Errorf("Handle = %q, want %q", resp.Handle, "DOM123")
 		}
-		if !resp.Status.Contains("active") {
+		hasActive := false
+		for _, s := range resp.Status {
+			if s == "active" {
+				hasActive = true
+				break
+			}
+		}
+		if !hasActive {
 			t.Error("expected status to contain 'active'")
 		}
 	})
@@ -134,34 +138,28 @@ func TestClient_QueryDomain(t *testing.T) {
 func TestClient_QueryIP(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/ip/8.8.8.8" {
-			resp := IPResponse{
-				ObjectClassName: "ip network",
-				Handle:          "NET-8-0-0-0-1",
-				StartAddress:    "8.0.0.0",
-				EndAddress:      "8.255.255.255",
-				IPVersion:       "v4",
-				Country:         "US",
-				Name:            "LVLT-ORG-8-8",
-			}
 			w.Header().Set("Content-Type", "application/rdap+json")
-			if err := json.NewEncoder(w).Encode(resp); err != nil {
-				t.Errorf("encode error: %v", err)
-			}
+			_, _ = w.Write([]byte(`{
+				"objectClassName": "ip network",
+				"handle": "NET-8-0-0-0-1",
+				"startAddress": "8.0.0.0",
+				"endAddress": "8.255.255.255",
+				"ipVersion": "v4",
+				"country": "US",
+				"name": "LVLT-ORG-8-8"
+			}`))
 			return
 		}
 		if r.URL.Path == "/ip/2001:4860:4860::8888" {
-			resp := IPResponse{
-				ObjectClassName: "ip network",
-				Handle:          "NET6-2001-4860",
-				StartAddress:    "2001:4860::",
-				EndAddress:      "2001:4860:ffff:ffff:ffff:ffff:ffff:ffff",
-				IPVersion:       "v6",
-				Country:         "US",
-			}
 			w.Header().Set("Content-Type", "application/rdap+json")
-			if err := json.NewEncoder(w).Encode(resp); err != nil {
-				t.Errorf("encode error: %v", err)
-			}
+			_, _ = w.Write([]byte(`{
+				"objectClassName": "ip network",
+				"handle": "NET6-2001-4860",
+				"startAddress": "2001:4860::",
+				"endAddress": "2001:4860:ffff:ffff:ffff:ffff:ffff:ffff",
+				"ipVersion": "v6",
+				"country": "US"
+			}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -222,18 +220,15 @@ func TestClient_QueryIP(t *testing.T) {
 func TestClient_QueryASN(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/autnum/15169" {
-			resp := ASNResponse{
-				ObjectClassName: "autnum",
-				Handle:          "AS15169",
-				StartAutnum:     15169,
-				EndAutnum:       15169,
-				Name:            "GOOGLE",
-				Country:         "US",
-			}
 			w.Header().Set("Content-Type", "application/rdap+json")
-			if err := json.NewEncoder(w).Encode(resp); err != nil {
-				t.Errorf("encode error: %v", err)
-			}
+			_, _ = w.Write([]byte(`{
+				"objectClassName": "autnum",
+				"handle": "AS15169",
+				"startAutnum": 15169,
+				"endAutnum": 15169,
+				"name": "GOOGLE",
+				"country": "US"
+			}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -277,15 +272,12 @@ func TestClient_QueryASN(t *testing.T) {
 func TestClient_QueryEntity(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/entity/REGISTRAR123" {
-			resp := EntityResponse{
-				ObjectClassName: "entity",
-				Handle:          "REGISTRAR123",
-				Roles:           []string{"registrar"},
-			}
 			w.Header().Set("Content-Type", "application/rdap+json")
-			if err := json.NewEncoder(w).Encode(resp); err != nil {
-				t.Errorf("encode error: %v", err)
-			}
+			_, _ = w.Write([]byte(`{
+				"objectClassName": "entity",
+				"handle": "REGISTRAR123",
+				"roles": ["registrar"]
+			}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -332,19 +324,16 @@ func TestClient_QueryEntity(t *testing.T) {
 func TestClient_QueryNameserver(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/nameserver/ns1.example.com" {
-			resp := NameserverResponse{
-				ObjectClassName: "nameserver",
-				LDHName:         "ns1.example.com",
-				Handle:          "NS123",
-				IPAddresses: &IPAddrs{
-					V4: []string{"192.0.2.1"},
-					V6: []string{"2001:db8::1"},
-				},
-			}
 			w.Header().Set("Content-Type", "application/rdap+json")
-			if err := json.NewEncoder(w).Encode(resp); err != nil {
-				t.Errorf("encode error: %v", err)
-			}
+			_, _ = w.Write([]byte(`{
+				"objectClassName": "nameserver",
+				"ldhName": "ns1.example.com",
+				"handle": "NS123",
+				"ipAddresses": {
+					"v4": ["192.0.2.1"],
+					"v6": ["2001:db8::1"]
+				}
+			}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -387,20 +376,17 @@ func TestClient_QueryNameserver(t *testing.T) {
 
 func TestClient_RetryLogic(t *testing.T) {
 	attempts := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		attempts++
 		if attempts < 3 {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		resp := DomainResponse{
-			ObjectClassName: "domain",
-			LDHName:         "example.com",
-		}
 		w.Header().Set("Content-Type", "application/rdap+json")
-		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			t.Errorf("encode error: %v", err)
-		}
+		_, _ = w.Write([]byte(`{
+			"objectClassName": "domain",
+			"ldhName": "example.com"
+		}`))
 	}))
 	defer server.Close()
 

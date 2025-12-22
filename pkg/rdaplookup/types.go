@@ -1,5 +1,7 @@
 package rdaplookup
 
+import "github.com/glimps-re/rdap-lookup/internal/schema"
+
 // DomainResponse represents a simplified domain lookup response.
 type DomainResponse struct {
 	Name           string         `json:"name"`
@@ -182,4 +184,212 @@ type ErrorResponse struct {
 type ErrorDetail struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+}
+
+// Conversion functions from internal/schema types to public types.
+
+// domainFromSchema converts an internal SimpleDomain to a public DomainResponse.
+func domainFromSchema(s *schema.SimpleDomain) *DomainResponse {
+	if s == nil {
+		return nil
+	}
+	resp := &DomainResponse{
+		Name:           s.Name,
+		UnicodeName:    s.UnicodeName,
+		Status:         s.Status,
+		CreatedDate:    s.CreatedDate,
+		UpdatedDate:    s.UpdatedDate,
+		ExpirationDate: s.ExpirationDate,
+		Registrar:      contactFromSchema(s.Registrar),
+		Registrant:     contactFromSchema(s.Registrant),
+		AdminContact:   contactFromSchema(s.AdminContact),
+		TechContact:    contactFromSchema(s.TechContact),
+		RDAPServer:     s.RDAPServer,
+	}
+
+	// Convert nameservers
+	if len(s.Nameservers) > 0 {
+		resp.Nameservers = make([]SimpleNS, len(s.Nameservers))
+		for i, ns := range s.Nameservers {
+			resp.Nameservers[i] = SimpleNS{
+				Name:        ns.Name,
+				UnicodeName: ns.UnicodeName,
+				IPv4:        ns.IPv4,
+				IPv6:        ns.IPv6,
+			}
+		}
+	}
+
+	// Convert DNSSEC
+	if s.DNSSEC != nil {
+		resp.DNSSEC = &SimpleDNSSEC{
+			Signed:           s.DNSSEC.Signed,
+			DelegationSigned: s.DNSSEC.DelegationSigned,
+		}
+	}
+
+	// Extract country from registrant if available
+	if s.Registrant != nil && s.Registrant.Country != "" {
+		resp.Country = s.Registrant.Country
+	}
+
+	return resp
+}
+
+// ipFromSchema converts an internal SimpleIP to a public IPResponse.
+func ipFromSchema(s *schema.SimpleIP) *IPResponse {
+	if s == nil {
+		return nil
+	}
+	return &IPResponse{
+		StartAddress: s.StartAddress,
+		EndAddress:   s.EndAddress,
+		CIDR:         s.CIDR,
+		IPVersion:    s.IPVersion,
+		Handle:       s.Handle,
+		Name:         s.Name,
+		Type:         s.Type,
+		ParentHandle: s.ParentHandle,
+		Status:       s.Status,
+		Country:      s.Country,
+		Registrant:   contactFromSchema(s.Registrant),
+		AdminContact: contactFromSchema(s.AdminContact),
+		TechContact:  contactFromSchema(s.TechContact),
+		AbuseContact: contactFromSchema(s.AbuseContact),
+		CreatedDate:  s.CreatedDate,
+		UpdatedDate:  s.UpdatedDate,
+		RDAPServer:   s.RDAPServer,
+	}
+}
+
+// asnFromSchema converts an internal SimpleASN to a public ASNResponse.
+func asnFromSchema(s *schema.SimpleASN) *ASNResponse {
+	if s == nil {
+		return nil
+	}
+	resp := &ASNResponse{
+		StartAutnum: s.ASN, // Use ASN as StartAutnum for compatibility
+		EndAutnum:   s.ASN,
+		Handle:      s.Handle,
+		Name:        s.Name,
+		Type:        s.Type,
+		Status:      s.Status,
+		Country:     s.Country,
+		CreatedDate: s.CreatedDate,
+		UpdatedDate: s.UpdatedDate,
+		RDAPServer:  s.RDAPServer,
+	}
+
+	// Use range if different from single ASN
+	if s.StartASN != 0 {
+		resp.StartAutnum = s.StartASN
+	}
+	if s.EndASN != 0 {
+		resp.EndAutnum = s.EndASN
+	}
+
+	// Convert entities from contacts
+	entities := make([]SimpleEntity, 0, 4)
+	if s.Registrant != nil {
+		entities = append(entities, entityFromContact(s.Registrant, "registrant"))
+	}
+	if s.AdminContact != nil {
+		entities = append(entities, entityFromContact(s.AdminContact, "administrative"))
+	}
+	if s.TechContact != nil {
+		entities = append(entities, entityFromContact(s.TechContact, "technical"))
+	}
+	if s.AbuseContact != nil {
+		entities = append(entities, entityFromContact(s.AbuseContact, "abuse"))
+	}
+	if len(entities) > 0 {
+		resp.Entities = entities
+	}
+
+	return resp
+}
+
+// entityFromSchema converts an internal SimpleEntityFull to a public EntityResponse.
+func entityFromSchema(s *schema.SimpleEntityFull) *EntityResponse {
+	if s == nil {
+		return nil
+	}
+	resp := &EntityResponse{
+		Handle:       s.Handle,
+		Name:         s.Name,
+		Organization: s.Organization,
+		Email:        s.Email,
+		Phone:        s.Phone,
+		Address:      s.Address,
+		Country:      s.Country,
+		Roles:        s.Roles,
+		Status:       s.Status,
+		CreatedDate:  s.CreatedDate,
+		UpdatedDate:  s.UpdatedDate,
+		RDAPServer:   s.RDAPServer,
+	}
+
+	// Convert related IP networks
+	if len(s.RelatedIPNets) > 0 {
+		resp.RelatedIPNets = make([]SimpleIPNet, len(s.RelatedIPNets))
+		for i, net := range s.RelatedIPNets {
+			resp.RelatedIPNets[i] = SimpleIPNet{
+				Handle:       net.Handle,
+				StartAddress: net.StartAddress,
+				EndAddress:   net.EndAddress,
+				Name:         net.Name,
+				Country:      net.Country,
+			}
+		}
+	}
+
+	// Convert related ASNs
+	if len(s.RelatedASNs) > 0 {
+		resp.RelatedASNs = make([]SimpleASNEntry, len(s.RelatedASNs))
+		for i, asn := range s.RelatedASNs {
+			resp.RelatedASNs[i] = SimpleASNEntry{
+				ASN:     asn.ASN,
+				Handle:  asn.Handle,
+				Name:    asn.Name,
+				Country: asn.Country,
+			}
+		}
+	}
+
+	return resp
+}
+
+// contactFromSchema converts an internal SimpleEntity to a public SimpleContact.
+func contactFromSchema(s *schema.SimpleEntity) *SimpleContact {
+	if s == nil {
+		return nil
+	}
+	return &SimpleContact{
+		Handle:       s.Handle,
+		Name:         s.Name,
+		Organization: s.Organization,
+		Email:        s.Email,
+		Phone:        s.Phone,
+		Address:      s.Address,
+		Country:      s.Country,
+		Roles:        s.Roles,
+	}
+}
+
+// entityFromContact converts a SimpleEntity (contact) to a SimpleEntity for ASN response.
+func entityFromContact(s *schema.SimpleEntity, role string) SimpleEntity {
+	e := SimpleEntity{
+		Handle:       s.Handle,
+		Name:         s.Name,
+		Organization: s.Organization,
+		Email:        s.Email,
+		Phone:        s.Phone,
+		Country:      s.Country,
+	}
+	if len(s.Roles) > 0 {
+		e.Roles = s.Roles
+	} else {
+		e.Roles = []string{role}
+	}
+	return e
 }
