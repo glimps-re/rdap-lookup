@@ -1,0 +1,653 @@
+openapi: 3.0.3
+info:
+  title: RDAP Lookup API
+  version: 1.0.0
+  description: |
+    High-performance RDAP (Registration Data Access Protocol) lookup service with two-tier caching.
+
+    This service provides a simplified JSON API for querying RDAP data about domains, IP addresses,
+    ASNs, and entities. It uses IANA bootstrap data to automatically discover the correct RDAP
+    servers and implements a two-tier cache (L1 RAM + L2 Redis) for performance.
+
+    ## Features
+    - Full RDAP support: domain, IP, ASN, entity queries
+    - Two-tier caching: L1 (RAM/LRU) + L2 (Redis, optional)
+    - IANA bootstrap for automatic RDAP server discovery
+    - Simplified JSON responses with country extraction
+    - Batch query support (up to 100 queries)
+    - Prometheus metrics and structured logging
+
+    ## Response Headers
+    - `X-Cache: HIT` - Response served from cache
+    - `X-Cache: MISS` - Response fetched from upstream RDAP server
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+
+tags:
+  - name: Health
+    description: Health and operational endpoints
+  - name: Domain
+    description: Domain WHOIS/RDAP lookups
+  - name: IP
+    description: IP address WHOIS/RDAP lookups
+  - name: ASN
+    description: Autonomous System Number lookups
+  - name: Entity
+    description: Entity/contact lookups
+  - name: Batch
+    description: Batch lookup operations
+
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe
+      description: Returns 200 if the service is running. Used by Kubernetes liveness probes.
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Service is alive
+
+  /ready:
+    get:
+      summary: Readiness probe
+      description: Returns 200 if the service is ready to accept traffic. Used by Kubernetes readiness probes.
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Service is ready
+        '503':
+          description: Service is not ready
+
+  /metrics:
+    get:
+      summary: Prometheus metrics
+      description: Returns Prometheus-formatted metrics for monitoring.
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Prometheus metrics
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /meta:
+    get:
+      summary: Service metadata
+      description: Returns service build information and version.
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Service metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetaResponse'
+
+  /api/v1/domain/{name}:
+    get:
+      summary: Domain lookup
+      description: |
+        Performs an RDAP lookup for a domain name and returns simplified domain registration data.
+
+        The service automatically discovers the correct RDAP server using IANA bootstrap data.
+        Results are cached according to the configured TTL.
+      tags:
+        - Domain
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Domain name to lookup (e.g., "example.com")
+          example: example.com
+      responses:
+        '200':
+          description: Domain information
+          headers:
+            X-Cache:
+              schema:
+                type: string
+                enum: [HIT, MISS]
+              description: Cache status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DomainResponse'
+        '400':
+          description: Invalid domain name format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Domain not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: Upstream RDAP server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/ip/{addr}:
+    get:
+      summary: IP address lookup
+      description: |
+        Performs an RDAP lookup for an IP address (IPv4 or IPv6) and returns network registration data.
+
+        The service automatically routes to the correct RIR (Regional Internet Registry)
+        based on IANA allocations.
+      tags:
+        - IP
+      parameters:
+        - name: addr
+          in: path
+          required: true
+          schema:
+            type: string
+          description: IP address to lookup (IPv4 or IPv6)
+          example: 8.8.8.8
+      responses:
+        '200':
+          description: IP network information
+          headers:
+            X-Cache:
+              schema:
+                type: string
+                enum: [HIT, MISS]
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IPResponse'
+        '400':
+          description: Invalid IP address format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: IP network not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/asn/{asn}:
+    get:
+      summary: ASN lookup
+      description: |
+        Performs an RDAP lookup for an Autonomous System Number (ASN).
+
+        The ASN can be provided with or without the "AS" prefix (e.g., "15169" or "AS15169").
+      tags:
+        - ASN
+      parameters:
+        - name: asn
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Autonomous System Number (with or without "AS" prefix)
+          example: "15169"
+      responses:
+        '200':
+          description: ASN information
+          headers:
+            X-Cache:
+              schema:
+                type: string
+                enum: [HIT, MISS]
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ASNResponse'
+        '400':
+          description: Invalid ASN format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: ASN not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/entity/{handle}:
+    get:
+      summary: Entity lookup
+      description: |
+        Performs an RDAP lookup for an entity (registrar, registrant, contact, etc.).
+
+        Unlike domain/IP/ASN lookups, entity lookups are not bootstrappable, so a server URL
+        must be provided. The server URL is validated against the IANA bootstrap allowlist
+        to prevent SSRF attacks.
+      tags:
+        - Entity
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Entity handle/identifier
+          example: "ABC123-EXAMPLE"
+        - name: server
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uri
+          description: RDAP server URL (must be in IANA bootstrap allowlist)
+          example: "https://rdap.verisign.com/com/v1"
+      responses:
+        '200':
+          description: Entity information
+          headers:
+            X-Cache:
+              schema:
+                type: string
+                enum: [HIT, MISS]
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntityResponse'
+        '400':
+          description: Invalid request (missing server or not in allowlist)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Entity not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/batch:
+    post:
+      summary: Batch lookup
+      description: |
+        Performs multiple RDAP lookups in a single request.
+
+        Queries are processed in parallel with bounded concurrency.
+        Maximum 100 queries per batch request.
+      tags:
+        - Batch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchRequest'
+            example:
+              queries:
+                - type: domain
+                  value: google.com
+                - type: ip
+                  value: 1.1.1.1
+                - type: asn
+                  value: "15169"
+      responses:
+        '200':
+          description: Batch results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    MetaResponse:
+      type: object
+      properties:
+        service:
+          type: string
+          example: rdap-lookup
+        version:
+          type: string
+          example: "1.0.0"
+        build_time:
+          type: string
+          format: date-time
+        go_version:
+          type: string
+          example: "go1.21.0"
+
+    DomainResponse:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Domain name in LDH (letters, digits, hyphens) format
+          example: example.com
+        unicode_name:
+          type: string
+          description: Domain name in Unicode format (for IDN domains)
+        status:
+          type: array
+          items:
+            type: string
+          description: Domain status codes
+          example: ["active", "client transfer prohibited"]
+        registrar:
+          $ref: '#/components/schemas/SimpleEntity'
+        registrant:
+          $ref: '#/components/schemas/SimpleEntity'
+        admin_contact:
+          $ref: '#/components/schemas/SimpleEntity'
+        tech_contact:
+          $ref: '#/components/schemas/SimpleEntity'
+        nameservers:
+          type: array
+          items:
+            $ref: '#/components/schemas/SimpleNameserver'
+        created_date:
+          type: string
+          format: date-time
+          description: Domain registration date
+        updated_date:
+          type: string
+          format: date-time
+          description: Last modification date
+        expiration_date:
+          type: string
+          format: date-time
+          description: Domain expiration date
+        dnssec:
+          $ref: '#/components/schemas/SimpleDNSSEC'
+        rdap_server:
+          type: string
+          description: RDAP server URL that provided this data
+          example: https://rdap.verisign.com/com/v1
+
+    SimpleEntity:
+      type: object
+      properties:
+        handle:
+          type: string
+          description: Entity identifier/handle
+        name:
+          type: string
+          description: Contact name
+        organization:
+          type: string
+          description: Organization name
+        email:
+          type: string
+          format: email
+          description: Contact email
+        phone:
+          type: string
+          description: Contact phone number
+        address:
+          type: string
+          description: Formatted address
+        country:
+          type: string
+          description: Country code (ISO 3166-1 alpha-2)
+          example: US
+        roles:
+          type: array
+          items:
+            type: string
+          description: Entity roles (registrar, registrant, technical, administrative)
+
+    SimpleNameserver:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Nameserver hostname
+          example: ns1.example.com
+        unicode_name:
+          type: string
+          description: Nameserver hostname in Unicode
+        ipv4:
+          type: array
+          items:
+            type: string
+          description: IPv4 addresses
+        ipv6:
+          type: array
+          items:
+            type: string
+          description: IPv6 addresses
+
+    SimpleDNSSEC:
+      type: object
+      properties:
+        signed:
+          type: boolean
+          description: Whether the zone is signed
+        delegation_signed:
+          type: boolean
+          description: Whether the delegation is signed
+
+    IPResponse:
+      type: object
+      properties:
+        handle:
+          type: string
+          description: Network handle
+        name:
+          type: string
+          description: Network name
+        start_address:
+          type: string
+          description: Start IP of the range
+        end_address:
+          type: string
+          description: End IP of the range
+        cidr:
+          type: string
+          description: CIDR notation
+          example: "8.8.8.0/24"
+        ip_version:
+          type: string
+          enum: [v4, v6]
+        type:
+          type: string
+          description: Network type (ALLOCATED, ASSIGNED, etc.)
+        country:
+          type: string
+          description: Country code
+        status:
+          type: array
+          items:
+            type: string
+        entities:
+          type: array
+          items:
+            $ref: '#/components/schemas/SimpleEntity'
+        rdap_server:
+          type: string
+
+    ASNResponse:
+      type: object
+      properties:
+        handle:
+          type: string
+          description: ASN handle
+        name:
+          type: string
+          description: AS name
+        start_autnum:
+          type: integer
+          description: Start of AS number range
+        end_autnum:
+          type: integer
+          description: End of AS number range
+        type:
+          type: string
+        country:
+          type: string
+        status:
+          type: array
+          items:
+            type: string
+        entities:
+          type: array
+          items:
+            $ref: '#/components/schemas/SimpleEntity'
+        rdap_server:
+          type: string
+
+    EntityResponse:
+      type: object
+      properties:
+        handle:
+          type: string
+        name:
+          type: string
+        organization:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        address:
+          type: string
+        country:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+        status:
+          type: array
+          items:
+            type: string
+        rdap_server:
+          type: string
+
+    BatchRequest:
+      type: object
+      required:
+        - queries
+      properties:
+        queries:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/BatchQuery'
+
+    BatchQuery:
+      type: object
+      required:
+        - type
+        - value
+      properties:
+        type:
+          type: string
+          enum: [domain, ip, asn, entity]
+          description: Query type
+        value:
+          type: string
+          description: Value to lookup
+        server:
+          type: string
+          description: RDAP server URL (required for entity queries)
+
+    BatchResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/BatchResult'
+        stats:
+          $ref: '#/components/schemas/BatchStats'
+
+    BatchResult:
+      type: object
+      properties:
+        type:
+          type: string
+          description: Query type
+        value:
+          type: string
+          description: Queried value
+        data:
+          type: object
+          description: Lookup result (DomainResponse, IPResponse, ASNResponse, or EntityResponse)
+        error:
+          type: string
+          description: Error message if lookup failed
+        cached:
+          type: boolean
+          description: Whether result was served from cache
+
+    BatchStats:
+      type: object
+      properties:
+        total:
+          type: integer
+          description: Total number of queries
+        success:
+          type: integer
+          description: Number of successful queries
+        errors:
+          type: integer
+          description: Number of failed queries
+        cache_hits:
+          type: integer
+          description: Number of cache hits
+        duration_ms:
+          type: integer
+          format: int64
+          description: Total processing time in milliseconds
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+
+    ErrorDetail:
+      type: object
+      properties:
+        code:
+          type: string
+          description: Error code
+          enum:
+            - INVALID_REQUEST
+            - NOT_FOUND
+            - RATE_LIMITED
+            - INVALID_SERVER
+            - UPSTREAM_ERROR
+        message:
+          type: string
+          description: Human-readable error message
