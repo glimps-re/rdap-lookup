@@ -61,7 +61,7 @@ func TestIPRateLimiter_RateLimitMiddleware(t *testing.T) {
 	h := rl.RateLimitMiddleware()(handler)
 
 	// First two requests should succeed (burst = 2)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)
 		req.Header.Set("X-Real-IP", "10.0.0.1")
 		rec := httptest.NewRecorder()
@@ -152,12 +152,12 @@ func TestIPRateLimiter_ConcurrentAccess(t *testing.T) {
 	requestsPerGoroutine := 100
 
 	// Run concurrent requests from different IPs
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
 			ip := "10.0.0." + string(rune('0'+id%10))
-			for j := 0; j < requestsPerGoroutine; j++ {
+			for range requestsPerGoroutine {
 				limiter := rl.getLimiter(ip)
 				_ = limiter.Allow() // Just exercise the limiter
 			}

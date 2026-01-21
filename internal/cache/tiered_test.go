@@ -108,7 +108,7 @@ func TestTieredCache_L1Only_Clear(t *testing.T) {
 	ctx := context.Background()
 
 	// Add entries
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		key := "test:clear:" + string(rune('a'+i))
 		_ = cache.Set(ctx, key, []byte("value"), time.Hour, false)
 	}
@@ -119,7 +119,7 @@ func TestTieredCache_L1Only_Clear(t *testing.T) {
 	}
 
 	// Verify entries are gone
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		key := "test:clear:" + string(rune('a'+i))
 		_, err = cache.Get(ctx, key)
 		if !errors.Is(err, ErrCacheMiss) {
@@ -257,7 +257,7 @@ func TestTieredCache_GetOrFetch_Singleflight(t *testing.T) {
 
 	// Launch multiple concurrent fetches for the same key
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -510,7 +510,7 @@ func TestTieredCache_WithL2_Clear(t *testing.T) {
 	ctx := context.Background()
 
 	// Add entries
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		key := "test:clear:" + string(rune('a'+i))
 		_ = tc.Set(ctx, key, []byte("value"), time.Hour, false)
 	}
@@ -522,7 +522,7 @@ func TestTieredCache_WithL2_Clear(t *testing.T) {
 	}
 
 	// Verify entries are gone from both
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		key := "test:clear:" + string(rune('a'+i))
 		_, err = tc.Get(ctx, key)
 		if !errors.Is(err, ErrCacheMiss) {

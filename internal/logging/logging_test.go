@@ -21,7 +21,7 @@ func TestSetup_JSONFormat(t *testing.T) {
 	}
 
 	// Verify it's valid JSON
-	var logEntry map[string]interface{}
+	var logEntry map[string]any
 	if err := json.Unmarshal([]byte(output), &logEntry); err != nil {
 		t.Fatalf("log output is not valid JSON: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestSetup_TextFormat(t *testing.T) {
 	}
 
 	// Text format should not be JSON
-	var logEntry map[string]interface{}
+	var logEntry map[string]any
 	if err := json.Unmarshal([]byte(output), &logEntry); err == nil {
 		t.Error("expected text format, got valid JSON")
 	}
@@ -137,7 +137,7 @@ func TestWithComponent(t *testing.T) {
 
 	output := buf.String()
 
-	var logEntry map[string]interface{}
+	var logEntry map[string]any
 	if err := json.Unmarshal([]byte(output), &logEntry); err != nil {
 		t.Fatalf("log output is not valid JSON: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestWithRequestID(t *testing.T) {
 
 	output := buf.String()
 
-	var logEntry map[string]interface{}
+	var logEntry map[string]any
 	if err := json.Unmarshal([]byte(output), &logEntry); err != nil {
 		t.Fatalf("log output is not valid JSON: %v", err)
 	}

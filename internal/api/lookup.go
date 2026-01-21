@@ -19,6 +19,8 @@ import (
 	"github.com/glimps-re/rdap-lookup/internal/rdap"
 	"github.com/glimps-re/rdap-lookup/internal/schema"
 	"github.com/glimps-re/rdap-lookup/internal/validate"
+	"github.com/glimps-re/rdap-lookup/internal/whois"
+	"github.com/glimps-re/rdap-lookup/internal/whois/parsers"
 )
 
 // Lookup outcome constants for metrics.
@@ -38,6 +40,11 @@ type LookupHandler struct {
 	serverValidator *validate.RDAPServerValidator
 	batchConfig     config.BatchConfig
 	metrics         *metrics.Metrics
+
+	// WHOIS fallback support
+	whoisClient   *whois.Client
+	whoisRegistry *whois.ParserRegistry
+	whoisEnabled  bool
 }
 
 // NewLookupHandler creates a new lookup handler.
@@ -55,7 +62,26 @@ func NewLookupHandler(client *rdap.Client, bs *bootstrap.Service, c *cache.Tiere
 		serverValidator: validate.NewRDAPServerValidator(servers),
 		batchConfig:     batchCfg,
 		metrics:         m,
+		whoisEnabled:    false, // Disabled by default
 	}
+}
+
+// NewLookupHandlerWithWHOIS creates a new lookup handler with WHOIS fallback support.
+func NewLookupHandlerWithWHOIS(client *rdap.Client, bs *bootstrap.Service, c *cache.TieredCache,
+	batchCfg config.BatchConfig, whoisCfg config.WHOISConfig, m *metrics.Metrics,
+) *LookupHandler {
+	h := NewLookupHandler(client, bs, c, batchCfg, m)
+
+	if whoisCfg.Enabled {
+		h.whoisEnabled = true
+		h.whoisClient = whois.NewClientFromConfig(whoisCfg, m)
+
+		// Initialize parser registry with all TLD-specific parsers
+		h.whoisRegistry = whois.NewParserRegistry()
+		parsers.RegisterAll(h.whoisRegistry)
+	}
+
+	return h
 }
 
 // recordLookupMetrics records metrics for a lookup operation.
@@ -104,6 +130,19 @@ func (h *LookupHandler) SetResolver(r *bootstrap.Resolver) {
 	}
 }
 
+// Close closes the lookup handler and releases resources.
+func (h *LookupHandler) Close() error {
+	if h.whoisClient != nil {
+		return h.whoisClient.Close()
+	}
+	return nil
+}
+
+// WHOISEnabled returns whether WHOIS fallback is enabled.
+func (h *LookupHandler) WHOISEnabled() bool {
+	return h.whoisEnabled
+}
+
 // LookupDomain handles domain lookup requests.
 func (h *LookupHandler) LookupDomain(c echo.Context) error {
 	name := strings.ToLower(strings.TrimSpace(c.Param("name")))
@@ -121,24 +160,7 @@ func (h *LookupHandler) LookupDomain(c echo.Context) error {
 
 	// Try to get from cache or fetch
 	data, cached, err := h.cache.GetOrFetchWithNegative(ctx, cacheKey, func() ([]byte, error) {
-		// Update resolver before query
-		h.client.SetResolver(h.bootstrap.Resolver())
-
-		resp, err := h.client.QueryDomain(ctx, name)
-		if err != nil {
-			return nil, err
-		}
-
-		// Get the RDAP server URL from bootstrap for reference
-		rdapServer := ""
-		if resolver := h.bootstrap.Resolver(); resolver != nil {
-			if urls, resolveErr := resolver.ResolveDomain(name); resolveErr == nil && len(urls) > 0 {
-				rdapServer = urls[0]
-			}
-		}
-
-		result := schema.TransformDomain(resp, rdapServer)
-		return json.Marshal(result)
+		return h.fetchDomainData(ctx, name)
 	}, rdap.ErrNotFound)
 
 	h.recordLookupMetrics("domain", err, cached)
@@ -148,6 +170,88 @@ func (h *LookupHandler) LookupDomain(c echo.Context) error {
 	}
 
 	return h.respondWithData(c, data, cached)
+}
+
+// fetchDomainData fetches domain data from RDAP, falling back to WHOIS if enabled.
+func (h *LookupHandler) fetchDomainData(ctx context.Context, name string) ([]byte, error) {
+	// Update resolver before query
+	h.client.SetResolver(h.bootstrap.Resolver())
+
+	// Try RDAP first
+	resp, rdapErr := h.client.QueryDomain(ctx, name)
+
+	// If RDAP succeeded, transform and return
+	if rdapErr == nil {
+		rdapServer := ""
+		if resolver := h.bootstrap.Resolver(); resolver != nil {
+			if urls, resolveErr := resolver.ResolveDomain(name); resolveErr == nil && len(urls) > 0 {
+				rdapServer = urls[0]
+			}
+		}
+		result := schema.TransformDomain(resp, rdapServer)
+		return json.Marshal(result)
+	}
+
+	// Check if we should fall back to WHOIS
+	// Only fall back when no RDAP server exists for the TLD (bootstrap.ErrNotFound)
+	if !errors.Is(rdapErr, bootstrap.ErrNotFound) || !h.whoisEnabled {
+		return nil, rdapErr
+	}
+
+	// Record WHOIS fallback metric
+	if h.metrics != nil {
+		tld := whois.ExtractTLD(name)
+		h.metrics.WHOISFallbackTotal.WithLabelValues(tld, "no_rdap_server").Inc()
+	}
+
+	// Try WHOIS fallback
+	return h.fetchDomainViaWHOIS(ctx, name)
+}
+
+// fetchDomainViaWHOIS fetches domain data using WHOIS protocol.
+func (h *LookupHandler) fetchDomainViaWHOIS(ctx context.Context, name string) ([]byte, error) {
+	if h.whoisClient == nil {
+		return nil, bootstrap.ErrNotFound
+	}
+
+	// Query WHOIS server
+	queryResult, err := h.whoisClient.Query(ctx, name)
+	if err != nil {
+		// Record parse error metric for WHOIS errors
+		if h.metrics != nil {
+			tld := whois.ExtractTLD(name)
+			h.metrics.WHOISParseErrorsTotal.WithLabelValues(tld).Inc()
+		}
+		// Convert WHOIS errors to appropriate error types
+		if errors.Is(err, whois.ErrDomainNotFound) {
+			return nil, rdap.ErrNotFound
+		}
+		return nil, err
+	}
+
+	// Parse the WHOIS response
+	tld := whois.ExtractTLD(name)
+	parser := h.whoisRegistry.GetParser(tld)
+	parseResult, err := parser.Parse(queryResult.Response, name)
+	if err != nil {
+		if h.metrics != nil {
+			h.metrics.WHOISParseErrorsTotal.WithLabelValues(tld).Inc()
+		}
+		return nil, err
+	}
+
+	// Set the WHOIS server in the parsed domain
+	if parseResult.Domain != nil {
+		parseResult.Domain.WHOISServer = queryResult.Server
+	}
+
+	// Transform to SimpleDomain
+	result := whois.TransformToSimpleDomain(parseResult)
+	if result == nil {
+		return nil, rdap.ErrNotFound
+	}
+
+	return json.Marshal(result)
 }
 
 // LookupIP handles IP lookup requests.
@@ -516,22 +620,7 @@ func (h *LookupHandler) lookupDomainData(ctx context.Context, name string) ([]by
 	cacheKey := cache.BuildKey(cache.KeyPrefixDomain, name)
 
 	return h.cache.GetOrFetchWithNegative(ctx, cacheKey, func() ([]byte, error) {
-		h.client.SetResolver(h.bootstrap.Resolver())
-
-		resp, err := h.client.QueryDomain(ctx, name)
-		if err != nil {
-			return nil, err
-		}
-
-		rdapServer := ""
-		if resolver := h.bootstrap.Resolver(); resolver != nil {
-			if urls, resolveErr := resolver.ResolveDomain(name); resolveErr == nil && len(urls) > 0 {
-				rdapServer = urls[0]
-			}
-		}
-
-		result := schema.TransformDomain(resp, rdapServer)
-		return json.Marshal(result)
+		return h.fetchDomainData(ctx, name)
 	}, rdap.ErrNotFound)
 }
 

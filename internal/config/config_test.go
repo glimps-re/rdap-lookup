@@ -23,6 +23,9 @@ func TestLoad_Defaults(t *testing.T) {
 		"RDAP_BOOTSTRAP_REFRESH",
 		"RDAP_LOG_LEVEL",
 		"RDAP_LOG_FORMAT",
+		"RDAP_WHOIS_ENABLED",
+		"RDAP_WHOIS_TIMEOUT",
+		"RDAP_WHOIS_MAX_RESPONSE_SIZE",
 	}
 
 	for _, env := range envVars {
@@ -85,6 +88,17 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.Log.Format != "json" {
 		t.Errorf("Log.Format = %v, want json", cfg.Log.Format)
 	}
+
+	// WHOIS defaults (disabled by default)
+	if cfg.WHOIS.Enabled {
+		t.Error("WHOIS.Enabled = true, want false")
+	}
+	if cfg.WHOIS.Timeout != 10*time.Second {
+		t.Errorf("WHOIS.Timeout = %v, want 10s", cfg.WHOIS.Timeout)
+	}
+	if cfg.WHOIS.MaxResponseSize != 64*1024 {
+		t.Errorf("WHOIS.MaxResponseSize = %v, want 64KB", cfg.WHOIS.MaxResponseSize)
+	}
 }
 
 func TestLoad_CustomValues(t *testing.T) {
@@ -117,6 +131,27 @@ func TestLoad_CustomValues(t *testing.T) {
 	}
 	if cfg.Log.Format != "text" {
 		t.Errorf("Log.Format = %v, want text", cfg.Log.Format)
+	}
+}
+
+func TestLoad_WHOISEnabled(t *testing.T) {
+	t.Setenv("RDAP_WHOIS_ENABLED", "true")
+	t.Setenv("RDAP_WHOIS_TIMEOUT", "15s")
+	t.Setenv("RDAP_WHOIS_MAX_RESPONSE_SIZE", "128KB")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if !cfg.WHOIS.Enabled {
+		t.Error("WHOIS.Enabled = false, want true")
+	}
+	if cfg.WHOIS.Timeout != 15*time.Second {
+		t.Errorf("WHOIS.Timeout = %v, want 15s", cfg.WHOIS.Timeout)
+	}
+	if cfg.WHOIS.MaxResponseSize != 128*1024 {
+		t.Errorf("WHOIS.MaxResponseSize = %v, want 128KB", cfg.WHOIS.MaxResponseSize)
 	}
 }
 

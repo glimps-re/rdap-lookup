@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -59,13 +60,8 @@ var backoffMultipliers = []time.Duration{
 // calculateBackoff returns the backoff duration for a retry attempt.
 // attempt should be >= 1 (first retry).
 func calculateBackoff(attempt int) time.Duration {
-	idx := attempt - 1
-	if idx < 0 {
-		idx = 0
-	}
-	if idx >= len(backoffMultipliers) {
-		idx = len(backoffMultipliers) - 1
-	}
+	idx := max(attempt-1, 0)
+	idx = min(idx, len(backoffMultipliers)-1)
 	return backoffMultipliers[idx]
 }
 
@@ -438,11 +434,11 @@ func (c *Client) doQuery(ctx context.Context, queryType QueryType, queryURL stri
 	if c.metrics != nil {
 		// Per-type metrics
 		c.metrics.RDAPClientRequestDuration.WithLabelValues(string(queryType)).Observe(duration.Seconds())
-		c.metrics.RDAPClientRequestsTotal.WithLabelValues(string(queryType), fmt.Sprintf("%d", resp.StatusCode)).Inc()
+		c.metrics.RDAPClientRequestsTotal.WithLabelValues(string(queryType), strconv.Itoa(resp.StatusCode)).Inc()
 
 		// Per-server metrics
 		c.metrics.RDAPUpstreamRequestDuration.WithLabelValues(serverHost).Observe(duration.Seconds())
-		c.metrics.RDAPUpstreamRequestsTotal.WithLabelValues(serverHost, fmt.Sprintf("%d", resp.StatusCode)).Inc()
+		c.metrics.RDAPUpstreamRequestsTotal.WithLabelValues(serverHost, strconv.Itoa(resp.StatusCode)).Inc()
 	}
 
 	c.logger.Debug("RDAP query completed",

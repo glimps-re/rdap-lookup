@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -55,7 +56,7 @@ func (c *PhishStatsClient) FetchPhishingURLs(ctx context.Context, count int) ([]
 
 	// Build URL with parameters
 	params := url.Values{}
-	params.Set("_size", fmt.Sprintf("%d", count))
+	params.Set("_size", strconv.Itoa(count))
 	params.Set("_sort", "-date")
 
 	reqURL := fmt.Sprintf("%s?%s", phishStatsAPIURL, params.Encode())

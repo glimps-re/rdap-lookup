@@ -207,7 +207,7 @@ func (c *Client) Close() error {
 	return nil
 }
 
-func (c *Client) doRequest(ctx context.Context, method, path string, body, result interface{}) error {
+func (c *Client) doRequest(ctx context.Context, method, path string, body, result any) error {
 	var bodyReader io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -252,7 +252,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body, resul
 	return lastErr
 }
 
-func (c *Client) doSingleRequest(ctx context.Context, method, path string, body io.Reader, result interface{}) error {
+func (c *Client) doSingleRequest(ctx context.Context, method, path string, body io.Reader, result any) error {
 	fullURL := c.baseURL + path
 
 	req, err := http.NewRequestWithContext(ctx, method, fullURL, body)
