@@ -8,20 +8,26 @@ import (
 
 // SimpleDomain represents a simplified domain response.
 type SimpleDomain struct {
-	Name           string           `json:"name"`
-	UnicodeName    string           `json:"unicode_name,omitempty"`
-	Status         []string         `json:"status,omitempty"`
-	Registrar      *SimpleEntity    `json:"registrar,omitempty"`
-	Registrant     *SimpleEntity    `json:"registrant,omitempty"`
-	AdminContact   *SimpleEntity    `json:"admin_contact,omitempty"`
-	TechContact    *SimpleEntity    `json:"tech_contact,omitempty"`
-	Nameservers    []SimpleNS       `json:"nameservers,omitempty"`
-	CreatedDate    string           `json:"created_date,omitempty"`
-	UpdatedDate    string           `json:"updated_date,omitempty"`
-	ExpirationDate string           `json:"expiration_date,omitempty"`
-	DNSSEC         *SimpleDNSSEC    `json:"dnssec,omitempty"`
-	RDAPServer     string           `json:"rdap_server,omitempty"`
-	Raw            *openrdap.Domain `json:"-"`
+	Name           string        `json:"name"`
+	UnicodeName    string        `json:"unicode_name,omitempty"`
+	Status         []string      `json:"status,omitempty"`
+	Registrar      *SimpleEntity `json:"registrar,omitempty"`
+	Registrant     *SimpleEntity `json:"registrant,omitempty"`
+	AdminContact   *SimpleEntity `json:"admin_contact,omitempty"`
+	TechContact    *SimpleEntity `json:"tech_contact,omitempty"`
+	Nameservers    []SimpleNS    `json:"nameservers,omitempty"`
+	CreatedDate    string        `json:"created_date,omitempty"`
+	UpdatedDate    string        `json:"updated_date,omitempty"`
+	ExpirationDate string        `json:"expiration_date,omitempty"`
+	DNSSEC         *SimpleDNSSEC `json:"dnssec,omitempty"`
+
+	// Source information
+	DataSource  string `json:"data_source"`            // "rdap" or "whois"
+	RDAPServer  string `json:"rdap_server,omitempty"`  // RDAP server URL (if source is rdap)
+	WHOISServer string `json:"whois_server,omitempty"` // WHOIS server hostname (if source is whois)
+	Confidence  string `json:"confidence,omitempty"`   // "high" or "low" (for whois only)
+
+	Raw *openrdap.Domain `json:"-"`
 }
 
 // SimpleNS represents a simplified nameserver.
@@ -60,6 +66,7 @@ func TransformDomain(resp *openrdap.Domain, rdapServer string) *SimpleDomain {
 		Name:        resp.LDHName,
 		UnicodeName: resp.UnicodeName,
 		Status:      resp.Status,
+		DataSource:  "rdap",
 		RDAPServer:  rdapServer,
 		Raw:         resp,
 	}

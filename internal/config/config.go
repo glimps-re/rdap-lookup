@@ -18,6 +18,19 @@ type Config struct {
 	Log       LogConfig
 	RateLimit RateLimitConfig
 	Batch     BatchConfig
+	WHOIS     WHOISConfig
+}
+
+// WHOISConfig holds WHOIS fallback configuration.
+type WHOISConfig struct {
+	// Enabled controls whether WHOIS fallback is enabled (default: false).
+	// When enabled, the service will query WHOIS servers for TLDs without RDAP support.
+	Enabled bool
+	// Timeout is the timeout for WHOIS queries (default: 10s).
+	Timeout time.Duration
+	// MaxResponseSize is the maximum WHOIS response size in bytes (default: 64KB).
+	// This prevents memory exhaustion from malicious or malformed responses.
+	MaxResponseSize int64
 }
 
 // ServerConfig holds HTTP server configuration.
@@ -163,6 +176,11 @@ func Load() (*Config, error) {
 			Concurrency: getIntEnv("RDAP_BATCH_CONCURRENCY", 10),
 			Timeout:     getDurationEnv("RDAP_BATCH_TIMEOUT", 30*time.Second),
 		},
+		WHOIS: WHOISConfig{
+			Enabled:         getBoolEnv("RDAP_WHOIS_ENABLED", false),
+			Timeout:         getDurationEnv("RDAP_WHOIS_TIMEOUT", 10*time.Second),
+			MaxResponseSize: getSizeEnv("RDAP_WHOIS_MAX_RESPONSE_SIZE", 64*1024), // 64KB
+		},
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -234,6 +252,16 @@ func (c *Config) Validate() error {
 
 	if c.Batch.Timeout <= 0 {
 		return fmt.Errorf("batch timeout must be positive")
+	}
+
+	// WHOIS validation (only when enabled)
+	if c.WHOIS.Enabled {
+		if c.WHOIS.Timeout <= 0 {
+			return fmt.Errorf("WHOIS timeout must be positive")
+		}
+		if c.WHOIS.MaxResponseSize <= 0 {
+			return fmt.Errorf("WHOIS max response size must be positive")
+		}
 	}
 
 	return nil

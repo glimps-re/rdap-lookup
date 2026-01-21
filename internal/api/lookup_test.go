@@ -1614,3 +1614,102 @@ func TestLookupHandler_BatchStatsCalculation(t *testing.T) {
 		t.Errorf("Stats.DurationMs = %d seems too high (elapsed: %v)", resp.Stats.DurationMs, elapsed)
 	}
 }
+
+func TestNewLookupHandlerWithWHOIS_Disabled(t *testing.T) {
+	// Create handler with WHOIS disabled
+	whoisCfg := config.WHOISConfig{
+		Enabled:         false,
+		Timeout:         10 * time.Second,
+		MaxResponseSize: 64 * 1024,
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	m := metrics.New()
+
+	rdapClient := rdap.NewClient(10 * time.Second)
+	bs := bootstrap.NewService(24*time.Hour, 10*time.Second, logger, m)
+
+	cacheCfg := cache.DefaultTieredCacheConfig()
+	tieredCache, err := cache.NewTieredCache(cacheCfg)
+	if err != nil {
+		t.Fatalf("NewTieredCache error: %v", err)
+	}
+
+	batchCfg := config.BatchConfig{Concurrency: 10, Timeout: 30 * time.Second}
+
+	handler := NewLookupHandlerWithWHOIS(rdapClient, bs, tieredCache, batchCfg, whoisCfg, nil)
+
+	if handler.WHOISEnabled() {
+		t.Error("WHOISEnabled() = true, want false")
+	}
+}
+
+func TestNewLookupHandlerWithWHOIS_Enabled(t *testing.T) {
+	// Create handler with WHOIS enabled
+	whoisCfg := config.WHOISConfig{
+		Enabled:         true,
+		Timeout:         10 * time.Second,
+		MaxResponseSize: 64 * 1024,
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	m := metrics.New()
+
+	rdapClient := rdap.NewClient(10 * time.Second)
+	bs := bootstrap.NewService(24*time.Hour, 10*time.Second, logger, m)
+
+	cacheCfg := cache.DefaultTieredCacheConfig()
+	tieredCache, err := cache.NewTieredCache(cacheCfg)
+	if err != nil {
+		t.Fatalf("NewTieredCache error: %v", err)
+	}
+
+	batchCfg := config.BatchConfig{Concurrency: 10, Timeout: 30 * time.Second}
+
+	handler := NewLookupHandlerWithWHOIS(rdapClient, bs, tieredCache, batchCfg, whoisCfg, nil)
+
+	if !handler.WHOISEnabled() {
+		t.Error("WHOISEnabled() = false, want true")
+	}
+
+	// Cleanup
+	if err := handler.Close(); err != nil {
+		t.Errorf("Close() error: %v", err)
+	}
+}
+
+func TestLookupHandler_Close(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	m := metrics.New()
+
+	rdapClient := rdap.NewClient(10 * time.Second)
+	bs := bootstrap.NewService(24*time.Hour, 10*time.Second, logger, m)
+
+	cacheCfg := cache.DefaultTieredCacheConfig()
+	tieredCache, err := cache.NewTieredCache(cacheCfg)
+	if err != nil {
+		t.Fatalf("NewTieredCache error: %v", err)
+	}
+
+	batchCfg := config.BatchConfig{Concurrency: 10, Timeout: 30 * time.Second}
+
+	// Test Close on handler without WHOIS
+	handler := NewLookupHandler(rdapClient, bs, tieredCache, batchCfg, nil)
+
+	// Close should be idempotent and not error with no WHOIS client
+	if err := handler.Close(); err != nil {
+		t.Errorf("Close() error: %v", err)
+	}
+
+	// Test Close on handler with WHOIS
+	whoisCfg := config.WHOISConfig{
+		Enabled:         true,
+		Timeout:         10 * time.Second,
+		MaxResponseSize: 64 * 1024,
+	}
+
+	handlerWithWHOIS := NewLookupHandlerWithWHOIS(rdapClient, bs, tieredCache, batchCfg, whoisCfg, nil)
+	if err := handlerWithWHOIS.Close(); err != nil {
+		t.Errorf("Close() error: %v", err)
+	}
+}

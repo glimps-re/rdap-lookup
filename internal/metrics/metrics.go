@@ -64,6 +64,16 @@ type Metrics struct {
 	RateLimiterEntries       prometheus.Gauge   // Current number of IP entries
 	RateLimiterAtCapacity    prometheus.Counter // Times capacity was reached
 	RateLimiterSubnetEntries prometheus.Gauge   // Current number of subnet entries
+
+	// WHOIS client metrics
+	WHOISRequestsTotal     *prometheus.CounterVec   // Labels: server, status (success/error/timeout)
+	WHOISRequestDuration   *prometheus.HistogramVec // Labels: server
+	WHOISFallbackTotal     *prometheus.CounterVec   // Labels: tld, reason (no_rdap_server)
+	WHOISParseErrorsTotal  *prometheus.CounterVec   // Labels: tld
+	WHOISResponseSizeBytes *prometheus.HistogramVec // Labels: server
+	WHOISDiscoveryTotal    *prometheus.CounterVec   // Labels: tld, status (success/error/cached)
+	WHOISDiscoveryDuration *prometheus.HistogramVec // IANA discovery timing
+	WHOISServersCached     prometheus.Gauge         // Number of cached WHOIS servers
 }
 
 // New creates and registers all metrics.
@@ -323,6 +333,66 @@ func New() *Metrics {
 				Help: "Current number of subnet rate limiter entries (fallback)",
 			},
 		),
+
+		// WHOIS client metrics
+		WHOISRequestsTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "rdap_whois_requests_total",
+				Help: "Total number of WHOIS requests",
+			},
+			[]string{"server", "status"}, // status: success, error, timeout
+		),
+		WHOISRequestDuration: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "rdap_whois_request_duration_seconds",
+				Help:    "WHOIS request duration in seconds",
+				Buckets: []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10},
+			},
+			[]string{"server"},
+		),
+		WHOISFallbackTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "rdap_whois_fallback_total",
+				Help: "Total number of WHOIS fallback events",
+			},
+			[]string{"tld", "reason"}, // reason: no_rdap_server
+		),
+		WHOISParseErrorsTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "rdap_whois_parse_errors_total",
+				Help: "Total number of WHOIS parse errors",
+			},
+			[]string{"tld"},
+		),
+		WHOISResponseSizeBytes: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "rdap_whois_response_size_bytes",
+				Help:    "WHOIS response size in bytes",
+				Buckets: []float64{1024, 2048, 4096, 8192, 16384, 32768, 65536},
+			},
+			[]string{"server"},
+		),
+		WHOISDiscoveryTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "rdap_whois_discovery_total",
+				Help: "Total number of WHOIS server discovery attempts",
+			},
+			[]string{"tld", "status"}, // status: success, error, cached
+		),
+		WHOISDiscoveryDuration: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "rdap_whois_discovery_duration_seconds",
+				Help:    "WHOIS server discovery (IANA query) duration in seconds",
+				Buckets: []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10},
+			},
+			[]string{},
+		),
+		WHOISServersCached: prometheus.NewGauge(
+			prometheus.GaugeOpts{
+				Name: "rdap_whois_servers_cached",
+				Help: "Number of WHOIS servers in discovery cache",
+			},
+		),
 	}
 
 	return m
@@ -393,6 +463,16 @@ func (m *Metrics) Register() error {
 		m.RateLimiterEntries,
 		m.RateLimiterAtCapacity,
 		m.RateLimiterSubnetEntries,
+
+		// WHOIS metrics
+		m.WHOISRequestsTotal,
+		m.WHOISRequestDuration,
+		m.WHOISFallbackTotal,
+		m.WHOISParseErrorsTotal,
+		m.WHOISResponseSizeBytes,
+		m.WHOISDiscoveryTotal,
+		m.WHOISDiscoveryDuration,
+		m.WHOISServersCached,
 	}
 
 	for _, c := range metricCollectors {
