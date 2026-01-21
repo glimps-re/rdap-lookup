@@ -265,6 +265,16 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	// WHOIS validation (only when enabled)
+	if c.WHOIS.Enabled {
+		if c.WHOIS.Timeout <= 0 {
+			return fmt.Errorf("WHOIS timeout must be positive")
+		}
+		if c.WHOIS.MaxResponseSize <= 0 {
+			return fmt.Errorf("WHOIS max response size must be positive")
+		}
+	}
+
 	return nil
 }
 
