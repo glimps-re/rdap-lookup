@@ -109,8 +109,18 @@ func run() error {
 	// Wire up cache metrics
 	tieredCache.SetMetrics(metrics.NewCacheMetricsCollector(m))
 
-	// Create lookup handler
-	lookupHandler := api.NewLookupHandler(rdapClient, bs, tieredCache, cfg.Batch, m)
+	// Create lookup handler (with optional WHOIS fallback)
+	var lookupHandler *api.LookupHandler
+	if cfg.WHOIS.Enabled {
+		logger.Info("WHOIS fallback enabled",
+			slog.Duration("timeout", cfg.WHOIS.Timeout),
+			slog.Int64("max_response_size", cfg.WHOIS.MaxResponseSize),
+		)
+		lookupHandler = api.NewLookupHandlerWithWHOIS(rdapClient, bs, tieredCache, cfg.Batch, cfg.WHOIS, m)
+	} else {
+		lookupHandler = api.NewLookupHandler(rdapClient, bs, tieredCache, cfg.Batch, m)
+	}
+	defer func() { _ = lookupHandler.Close() }()
 
 	// Create server with build info and dependencies
 	buildInfo := api.BuildInfo{

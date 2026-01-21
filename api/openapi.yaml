@@ -1,8 +1,21 @@
 openapi: 3.0.3
 info:
   title: rdap-lookup API
-  description: High-performance RDAP (Registration Data Access Protocol) lookup service with two-tier caching
-  version: 1.0.0
+  description: |
+    High-performance RDAP (Registration Data Access Protocol) lookup service with two-tier caching.
+
+    Features:
+    - Full RDAP support for domain, IP, ASN, and entity queries
+    - WHOIS fallback for TLDs without RDAP servers (e.g., .de, .cn, .ru, .au, .eu, .it, .es, .jp)
+    - Two-tier caching with L1 (RAM/LRU) and optional L2 (Redis)
+    - Simplified JSON responses with country extraction
+    - Batch query support (up to 100 queries per request)
+
+    When WHOIS fallback is enabled and no RDAP server is found for a TLD, the service will
+    automatically query the appropriate WHOIS server and parse the response. WHOIS responses
+    include additional fields (`data_source`, `whois_server`, `confidence`) to indicate
+    the data source and parsing confidence level.
+  version: 1.1.0
   license:
     name: MIT
 
@@ -307,7 +320,21 @@ components:
         rdap_server:
           type: string
           format: uri
-          description: RDAP server URL used for this query
+          description: RDAP server URL used for this query (empty for WHOIS responses)
+        data_source:
+          type: string
+          enum: [rdap, whois]
+          description: Data source for this response
+          example: rdap
+        whois_server:
+          type: string
+          description: WHOIS server hostname (only present for WHOIS responses)
+          example: whois.denic.de
+        confidence:
+          type: string
+          enum: [high, low]
+          description: Confidence level of the parsed data (only present for WHOIS responses)
+          example: high
 
     IPResponse:
       type: object

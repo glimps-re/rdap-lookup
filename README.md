@@ -5,6 +5,7 @@ High-performance RDAP (Registration Data Access Protocol) lookup service with tw
 ## Features
 
 - Full RDAP support: domain, IP, ASN, entity queries
+- WHOIS fallback for TLDs without RDAP servers (.de, .cn, .ru, .au, .eu, .it, .es, .jp)
 - Two-tier caching: L1 (RAM/LRU) + L2 (Redis, optional)
 - IANA bootstrap for automatic RDAP server discovery
 - Simplified JSON responses with country extraction
@@ -68,6 +69,9 @@ All configuration is via environment variables:
 | `RDAP_BOOTSTRAP_REFRESH` | `24h` | IANA bootstrap refresh interval |
 | `RDAP_LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
 | `RDAP_LOG_FORMAT` | `json` | Log format (json, text) |
+| `RDAP_WHOIS_ENABLED` | `false` | Enable WHOIS fallback for unsupported TLDs |
+| `RDAP_WHOIS_TIMEOUT` | `10s` | WHOIS query timeout |
+| `RDAP_WHOIS_MAX_RESPONSE_SIZE` | `65536` | Maximum WHOIS response size (bytes) |
 
 ## API Endpoints
 
@@ -123,6 +127,52 @@ results, err := client.BatchLookup(ctx, []rdaplookup.Query{
 })
 ```
 
+## WHOIS Fallback
+
+When enabled, the service automatically falls back to WHOIS protocol for TLDs that do not have RDAP servers in the IANA bootstrap registry.
+
+### Supported TLDs
+
+The following TLDs have specialized parsers for high-confidence data extraction:
+
+| TLD | Registry | Parser |
+|-----|----------|--------|
+| `.de` | DENIC | Section-based format with contacts |
+| `.cn` | CNNIC | Chinese registry format |
+| `.ru` | TCINET | Russian registry format |
+| `.au`, `.com.au`, `.net.au`, `.org.au` | auDA | Australian compound TLDs |
+| `.eu` | EURid | European registry format |
+| `.it` | NIC.it | Italian registry format |
+| `.es`, `.com.es`, `.org.es`, `.nom.es` | Red.es | Spanish bilingual format |
+| `.jp`, `.co.jp`, `.or.jp` | JPRS | Japanese format with letter keys |
+
+All other TLDs use a generic best-effort parser with lower confidence.
+
+### Response Fields
+
+WHOIS responses include additional fields to indicate the data source:
+
+```json
+{
+  "name": "example.de",
+  "data_source": "whois",
+  "whois_server": "whois.denic.de",
+  "confidence": "high",
+  ...
+}
+```
+
+- `data_source`: Either `"rdap"` or `"whois"`
+- `whois_server`: The WHOIS server that provided the data (only for WHOIS responses)
+- `confidence`: `"high"` for TLD-specific parsers, `"low"` for generic parser
+
+### Enabling WHOIS Fallback
+
+```bash
+export RDAP_WHOIS_ENABLED=true
+./bin/rdap-lookup
+```
+
 ## Architecture
 
 ```
@@ -139,6 +189,13 @@ results, err := client.BatchLookup(ctx, []rdaplookup.Query{
 +---------------------------v----------------------+
 |              IANA Bootstrap Resolver             |
 |  TLD -> RDAP URL | IP -> RIR | ASN -> RIR       |
++---------------------------+----------------------+
+                            |
+            (if no RDAP server found)
+                            |
++---------------------------v----------------------+
+|              WHOIS Fallback (optional)           |
+|  IANA Discovery --> TLD Parser --> Transform    |
 +--------------------------------------------------+
 ```
 
