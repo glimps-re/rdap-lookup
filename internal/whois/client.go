@@ -226,10 +226,8 @@ func (c *Client) doQueryAddr(ctx context.Context, domain, server, addr string) (
 		}
 	}
 
-	// Build and send query
-	// Most WHOIS servers expect: domain\r\n
-	// Some servers (like .de) have specific formats, but domain\r\n is the standard
-	query := domain + "\r\n"
+	// Build and send query with server-specific formatting
+	query := buildServerQuery(domain, server)
 	if _, err := conn.Write([]byte(query)); err != nil {
 		return "", &WHOISError{Op: "write", Server: server, Err: err}
 	}
@@ -345,4 +343,36 @@ func normalizeDomain(domain string) string {
 	}
 
 	return domain
+}
+
+// buildServerQuery builds a server-specific WHOIS query string.
+// Different WHOIS servers have different query formats to retrieve full data.
+func buildServerQuery(domain, server string) string {
+	// Server-specific query formats
+	switch {
+	case strings.HasSuffix(server, ".denic.de") || server == "whois.denic.de":
+		// DENIC (.de) requires -T dn flag for full domain data
+		// Without this flag, only minimal data (domain name, status) is returned
+		return "-T dn " + domain + "\r\n"
+
+	case strings.HasSuffix(server, ".jprs.jp") || server == "whois.jprs.jp":
+		// JPRS (.jp) uses "DOM" prefix for domain queries
+		return "DOM " + domain + "/e\r\n"
+
+	case strings.HasSuffix(server, ".nic.ad.jp") || server == "whois.nic.ad.jp":
+		// NIC.AD.JP also uses /e suffix for English output
+		return domain + "/e\r\n"
+
+	case strings.Contains(server, "whois.verisign"):
+		// Verisign (.com, .net) - use "domain" prefix for exact match
+		return "domain " + domain + "\r\n"
+
+	case server == "whois.arin.net":
+		// ARIN - use "n" prefix for network queries, but for domains use standard
+		return "n + " + domain + "\r\n"
+
+	default:
+		// Standard WHOIS query format
+		return domain + "\r\n"
+	}
 }

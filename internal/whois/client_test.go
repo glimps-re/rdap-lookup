@@ -476,3 +476,71 @@ Status: active
 		t.Errorf("concurrent query error: %v", err)
 	}
 }
+
+func TestBuildServerQuery(t *testing.T) {
+	tests := []struct {
+		name     string
+		domain   string
+		server   string
+		expected string
+	}{
+		{
+			name:     "DENIC .de registry",
+			domain:   "example.de",
+			server:   "whois.denic.de",
+			expected: "-T dn example.de\r\n",
+		},
+		{
+			name:     "DENIC subdomain server",
+			domain:   "test.de",
+			server:   "sub.denic.de",
+			expected: "-T dn test.de\r\n",
+		},
+		{
+			name:     "JPRS .jp registry",
+			domain:   "example.jp",
+			server:   "whois.jprs.jp",
+			expected: "DOM example.jp/e\r\n",
+		},
+		{
+			name:     "NIC.AD.JP registry",
+			domain:   "example.jp",
+			server:   "whois.nic.ad.jp",
+			expected: "example.jp/e\r\n",
+		},
+		{
+			name:     "Verisign .com/.net",
+			domain:   "example.com",
+			server:   "whois.verisign-grs.com",
+			expected: "domain example.com\r\n",
+		},
+		{
+			name:     "ARIN",
+			domain:   "example.com",
+			server:   "whois.arin.net",
+			expected: "n + example.com\r\n",
+		},
+		{
+			name:     "Standard server",
+			domain:   "example.org",
+			server:   "whois.pir.org",
+			expected: "example.org\r\n",
+		},
+		{
+			name:     "Unknown server",
+			domain:   "example.xyz",
+			server:   "whois.nic.xyz",
+			expected: "example.xyz\r\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := buildServerQuery(tt.domain, tt.server)
+			if result != tt.expected {
+				t.Errorf("buildServerQuery(%q, %q) = %q, want %q",
+					tt.domain, tt.server, result, tt.expected)
+			}
+		})
+	}
+}
