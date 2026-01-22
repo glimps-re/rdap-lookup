@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -333,12 +334,12 @@ func parseServiceEntry(service []any) (ServiceEntry, error) {
 
 	keysRaw, ok := service[0].([]any)
 	if !ok {
-		return ServiceEntry{}, fmt.Errorf("invalid keys type")
+		return ServiceEntry{}, errors.New("invalid keys type")
 	}
 
 	urlsRaw, ok := service[1].([]any)
 	if !ok {
-		return ServiceEntry{}, fmt.Errorf("invalid urls type")
+		return ServiceEntry{}, errors.New("invalid urls type")
 	}
 
 	keys := make([]string, 0, len(keysRaw))
@@ -356,7 +357,7 @@ func parseServiceEntry(service []any) (ServiceEntry, error) {
 	}
 
 	if len(keys) == 0 || len(urls) == 0 {
-		return ServiceEntry{}, fmt.Errorf("empty keys or urls")
+		return ServiceEntry{}, errors.New("empty keys or urls")
 	}
 
 	return ServiceEntry{Keys: keys, URLs: urls}, nil
@@ -384,7 +385,7 @@ func parseASNRange(s string) (start, end uint32, err error) {
 			return 0, 0, err
 		}
 		if startN > endN {
-			return 0, 0, fmt.Errorf("invalid ASN range: start > end")
+			return 0, 0, errors.New("invalid ASN range: start > end")
 		}
 		return uint32(startN), uint32(endN), nil
 	default:

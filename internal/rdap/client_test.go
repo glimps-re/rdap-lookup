@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -85,14 +86,7 @@ func TestClient_QueryDomain(t *testing.T) {
 		if resp.Handle != "DOM123" {
 			t.Errorf("Handle = %q, want %q", resp.Handle, "DOM123")
 		}
-		hasActive := false
-		for _, s := range resp.Status {
-			if s == "active" {
-				hasActive = true
-				break
-			}
-		}
-		if !hasActive {
+		if !slices.Contains(resp.Status, "active") {
 			t.Error("expected status to contain 'active'")
 		}
 	})

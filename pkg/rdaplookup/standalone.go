@@ -351,7 +351,7 @@ func (c *StandaloneClient) LookupASN(ctx context.Context, asn string) (*ASNRespo
 	}
 
 	// Check cache
-	cacheKey := cache.BuildKey(cache.KeyPrefixASN, fmt.Sprintf("%d", asnNum))
+	cacheKey := cache.BuildKey(cache.KeyPrefixASN, strconv.FormatUint(uint64(asnNum), 10))
 	if c.cache != nil {
 		if entry, err := c.cache.Get(ctx, cacheKey); err == nil {
 			if entry.Negative {
@@ -378,7 +378,7 @@ func (c *StandaloneClient) LookupASN(ctx context.Context, asn string) (*ASNRespo
 	}
 
 	// Transform to simplified schema
-	simple := schema.TransformASN(rawResp, c.getRDAPServer(fmt.Sprintf("%d", asnNum), "autnum"))
+	simple := schema.TransformASN(rawResp, c.getRDAPServer(strconv.FormatUint(uint64(asnNum), 10), "autnum"))
 
 	// Convert to public response type
 	resp := asnFromSchema(simple)

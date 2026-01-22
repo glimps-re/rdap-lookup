@@ -224,7 +224,7 @@ func TestStandaloneClient_ContextCancellation(t *testing.T) {
 }
 
 func BenchmarkStandaloneClient_Create(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		client, err := NewStandaloneClient()
 		if err != nil {
 			b.Fatal(err)

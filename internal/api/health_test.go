@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -125,7 +124,7 @@ func TestHealthChecker_Concurrent(t *testing.T) {
 
 	// Test concurrent access
 	done := make(chan struct{})
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		go func(ready bool) {
 			h.SetReady(ready)
 			_ = h.IsReady()
@@ -133,14 +132,14 @@ func TestHealthChecker_Concurrent(t *testing.T) {
 	}
 
 	// Wait for goroutines (simple approach, not perfect)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		go func() {
 			_ = h.IsReady()
 			done <- struct{}{}
 		}()
 	}
 
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		<-done
 	}
 }
@@ -251,7 +250,7 @@ func TestHealthChecker_ReadinessHandler_WithL2CacheDegraded(t *testing.T) {
 
 func TestHealthChecker_SetLogger(t *testing.T) {
 	h := NewHealthChecker()
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := slog.New(slog.DiscardHandler)
 	h.SetLogger(logger)
 
 	// Verify logger was set by calling a method that uses it

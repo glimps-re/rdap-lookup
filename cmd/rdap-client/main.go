@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -278,7 +279,7 @@ func parseBoolOrDefault(s string, defaultValue bool) bool {
 func parseSize(s string) (int64, error) {
 	s = strings.TrimSpace(strings.ToUpper(s))
 	if s == "" {
-		return 0, fmt.Errorf("empty size string")
+		return 0, errors.New("empty size string")
 	}
 
 	// Check longer suffixes first to avoid partial matches
@@ -296,8 +297,7 @@ func parseSize(s string) (int64, error) {
 	}
 
 	for _, s2 := range suffixes {
-		if strings.HasSuffix(s, s2.suffix) {
-			numStr := strings.TrimSuffix(s, s2.suffix)
+		if numStr, found := strings.CutSuffix(s, s2.suffix); found {
 			num, err := strconv.ParseInt(numStr, 10, 64)
 			if err != nil {
 				return 0, fmt.Errorf("invalid size: %s", s)
@@ -377,7 +377,7 @@ Examples:
 	}
 
 	if len(remaining) == 0 {
-		return fmt.Errorf("missing domain name")
+		return errors.New("missing domain name")
 	}
 	domain := remaining[0]
 
@@ -430,7 +430,7 @@ Examples:
 	}
 
 	if len(remaining) == 0 {
-		return fmt.Errorf("missing IP address")
+		return errors.New("missing IP address")
 	}
 	addr := remaining[0]
 
@@ -483,7 +483,7 @@ Examples:
 	}
 
 	if len(remaining) == 0 {
-		return fmt.Errorf("missing ASN number")
+		return errors.New("missing ASN number")
 	}
 	asn := remaining[0]
 
@@ -550,10 +550,10 @@ Examples:
 	}
 
 	if handle == "" {
-		return fmt.Errorf("missing entity handle")
+		return errors.New("missing entity handle")
 	}
 	if rdapServer == "" {
-		return fmt.Errorf("missing --rdap-server (required for entity lookups)")
+		return errors.New("missing --rdap-server (required for entity lookups)")
 	}
 
 	client, err := createClient(cfg)
@@ -609,7 +609,7 @@ Examples:
 	}
 
 	if len(remaining) == 0 {
-		return fmt.Errorf("missing input (file, '-' for stdin, or inline queries)")
+		return errors.New("missing input (file, '-' for stdin, or inline queries)")
 	}
 
 	// Collect queries
@@ -667,7 +667,7 @@ Examples:
 	}
 
 	if len(queries) == 0 {
-		return fmt.Errorf("no queries provided")
+		return errors.New("no queries provided")
 	}
 
 	client, err := createClient(cfg)
@@ -690,7 +690,7 @@ Examples:
 func parseBatchQuery(s string) (rdaplookup.BatchQuery, error) {
 	parts := strings.SplitN(s, ":", 2)
 	if len(parts) != 2 {
-		return rdaplookup.BatchQuery{}, fmt.Errorf("expected format 'type:value'")
+		return rdaplookup.BatchQuery{}, errors.New("expected format 'type:value'")
 	}
 
 	qType := strings.ToLower(strings.TrimSpace(parts[0]))
@@ -729,7 +729,7 @@ Examples:
 	}
 
 	if cfg.Standalone {
-		return fmt.Errorf("health command is only available in REST mode (remove --standalone)")
+		return errors.New("health command is only available in REST mode (remove --standalone)")
 	}
 
 	client, err := rdaplookup.NewClient(cfg.ServerURL, rdaplookup.WithTimeout(cfg.Timeout))
@@ -767,15 +767,15 @@ Examples:
 
 func formatError(err error) error {
 	if rdaplookup.IsNotFoundError(err) {
-		return fmt.Errorf("not found")
+		return errors.New("not found")
 	}
 	if rdaplookup.IsRateLimitedError(err) {
-		return fmt.Errorf("rate limited - try again later")
+		return errors.New("rate limited - try again later")
 	}
 	return err
 }
 
-func outputResult(data interface{}, format string, tableFunc func(interface{})) error {
+func outputResult(data any, format string, tableFunc func(any)) error {
 	if format == "table" {
 		tableFunc(data)
 		return nil
@@ -787,7 +787,7 @@ func outputResult(data interface{}, format string, tableFunc func(interface{})) 
 	return enc.Encode(data)
 }
 
-func formatDomainTable(data interface{}) {
+func formatDomainTable(data any) {
 	d, ok := data.(*rdaplookup.DomainResponse)
 	if !ok {
 		return
@@ -820,7 +820,7 @@ func formatDomainTable(data interface{}) {
 	}
 }
 
-func formatIPTable(data interface{}) {
+func formatIPTable(data any) {
 	d, ok := data.(*rdaplookup.IPResponse)
 	if !ok {
 		return
@@ -849,7 +849,7 @@ func formatIPTable(data interface{}) {
 	}
 }
 
-func formatASNTable(data interface{}) {
+func formatASNTable(data any) {
 	d, ok := data.(*rdaplookup.ASNResponse)
 	if !ok {
 		return
@@ -874,7 +874,7 @@ func formatASNTable(data interface{}) {
 	}
 }
 
-func formatEntityTable(data interface{}) {
+func formatEntityTable(data any) {
 	d, ok := data.(*rdaplookup.EntityResponse)
 	if !ok {
 		return
@@ -901,7 +901,7 @@ func formatEntityTable(data interface{}) {
 	}
 }
 
-func formatBatchTable(data interface{}) {
+func formatBatchTable(data any) {
 	d, ok := data.(*rdaplookup.BatchResponse)
 	if !ok {
 		return

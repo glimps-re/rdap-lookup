@@ -250,9 +250,9 @@ func TestRDAPServerValidator_ConcurrentAccess(t *testing.T) {
 	done := make(chan bool)
 
 	// Readers
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
-			for j := 0; j < 100; j++ {
+			for range 100 {
 				_ = v.IsAllowed("https://rdap.arin.net/")
 				_ = v.AllowedCount()
 			}
@@ -261,9 +261,9 @@ func TestRDAPServerValidator_ConcurrentAccess(t *testing.T) {
 	}
 
 	// Writers
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		go func() {
-			for j := 0; j < 50; j++ {
+			for range 50 {
 				v.UpdateAllowlist([]string{
 					"https://rdap.apnic.net/",
 					"https://rdap.lacnic.net/",
@@ -274,7 +274,7 @@ func TestRDAPServerValidator_ConcurrentAccess(t *testing.T) {
 	}
 
 	// Wait for all goroutines
-	for i := 0; i < 15; i++ {
+	for range 15 {
 		<-done
 	}
 

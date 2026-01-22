@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -454,7 +455,7 @@ func (g *ReportGenerator) prepareTemplateData(report *AnalysisReport) *TemplateD
 	}
 
 	// Process domain results
-	var durations []time.Duration
+	durations := make([]time.Duration, 0, len(report.DomainResults))
 	tldCounts := make(map[string]int)
 	tldSuccess := make(map[string]int)
 	tldTimes := make(map[string][]time.Duration)
@@ -524,9 +525,7 @@ func (g *ReportGenerator) prepareTemplateData(report *AnalysisReport) *TemplateD
 
 	// Calculate percentiles
 	if len(durations) > 0 {
-		sort.Slice(durations, func(i, j int) bool {
-			return durations[i] < durations[j]
-		})
+		slices.Sort(durations)
 
 		data.P50 = percentile(durations, 50)
 		data.P95 = percentile(durations, 95)
@@ -605,10 +604,7 @@ func (g *ReportGenerator) prepareTemplateData(report *AnalysisReport) *TemplateD
 
 	// Error summary
 	for errType, domains := range errorCounts {
-		maxExamples := 3
-		if len(domains) < maxExamples {
-			maxExamples = len(domains)
-		}
+		maxExamples := min(3, len(domains))
 		examples := strings.Join(domains[:maxExamples], ", ")
 		if len(domains) > 3 {
 			examples += "..."

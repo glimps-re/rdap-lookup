@@ -420,7 +420,7 @@ func TestServer_RateLimitMiddlewareWithLogging_SkipsOperational(t *testing.T) {
 	// Make many requests to operational endpoints - they should not be rate limited
 	operationalPaths := []string{"/healthz", "/ready", "/metrics", "/meta"}
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		for _, path := range operationalPaths {
 			req := httptest.NewRequest(http.MethodGet, path, nil)
 			rec := httptest.NewRecorder()

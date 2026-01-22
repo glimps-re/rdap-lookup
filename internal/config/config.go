@@ -3,6 +3,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -18,6 +19,19 @@ type Config struct {
 	Log       LogConfig
 	RateLimit RateLimitConfig
 	Batch     BatchConfig
+	WHOIS     WHOISConfig
+}
+
+// WHOISConfig holds WHOIS fallback configuration.
+type WHOISConfig struct {
+	// Enabled controls whether WHOIS fallback is enabled (default: false).
+	// When enabled, the service will query WHOIS servers for TLDs without RDAP support.
+	Enabled bool
+	// Timeout is the timeout for WHOIS queries (default: 10s).
+	Timeout time.Duration
+	// MaxResponseSize is the maximum WHOIS response size in bytes (default: 64KB).
+	// This prevents memory exhaustion from malicious or malformed responses.
+	MaxResponseSize int64
 }
 
 // ServerConfig holds HTTP server configuration.
@@ -163,6 +177,11 @@ func Load() (*Config, error) {
 			Concurrency: getIntEnv("RDAP_BATCH_CONCURRENCY", 10),
 			Timeout:     getDurationEnv("RDAP_BATCH_TIMEOUT", 30*time.Second),
 		},
+		WHOIS: WHOISConfig{
+			Enabled:         getBoolEnv("RDAP_WHOIS_ENABLED", false),
+			Timeout:         getDurationEnv("RDAP_WHOIS_TIMEOUT", 10*time.Second),
+			MaxResponseSize: getSizeEnv("RDAP_WHOIS_MAX_RESPONSE_SIZE", 64*1024), // 64KB
+		},
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -175,47 +194,47 @@ func Load() (*Config, error) {
 // Validate validates the configuration.
 func (c *Config) Validate() error {
 	if c.Server.ListenAddr == "" {
-		return fmt.Errorf("listen address cannot be empty")
+		return errors.New("listen address cannot be empty")
 	}
 
 	if c.Server.ReadTimeout <= 0 {
-		return fmt.Errorf("read timeout must be positive")
+		return errors.New("read timeout must be positive")
 	}
 
 	if c.Server.WriteTimeout <= 0 {
-		return fmt.Errorf("write timeout must be positive")
+		return errors.New("write timeout must be positive")
 	}
 
 	if c.Server.ShutdownTimeout <= 0 {
-		return fmt.Errorf("shutdown timeout must be positive")
+		return errors.New("shutdown timeout must be positive")
 	}
 
 	if c.Cache.TTL <= 0 {
-		return fmt.Errorf("cache TTL must be positive")
+		return errors.New("cache TTL must be positive")
 	}
 
 	if c.Cache.NegativeTTL <= 0 {
-		return fmt.Errorf("negative cache TTL must be positive")
+		return errors.New("negative cache TTL must be positive")
 	}
 
 	if c.Cache.RAM.Enabled && c.Cache.RAM.MaxSize <= 0 {
-		return fmt.Errorf("RAM cache max size must be positive")
+		return errors.New("RAM cache max size must be positive")
 	}
 
 	if c.Cache.Redis.Enabled && c.Cache.Redis.Addr == "" {
-		return fmt.Errorf("redis address required when redis cache is enabled")
+		return errors.New("redis address required when redis cache is enabled")
 	}
 
 	if c.RDAP.Timeout <= 0 {
-		return fmt.Errorf("RDAP timeout must be positive")
+		return errors.New("RDAP timeout must be positive")
 	}
 
 	if c.RDAP.MaxRetries < 0 {
-		return fmt.Errorf("RDAP max retries cannot be negative")
+		return errors.New("RDAP max retries cannot be negative")
 	}
 
 	if c.Bootstrap.RefreshInterval <= 0 {
-		return fmt.Errorf("bootstrap refresh interval must be positive")
+		return errors.New("bootstrap refresh interval must be positive")
 	}
 
 	validLevels := map[string]bool{"debug": true, "info": true, "warn": true, "error": true}
@@ -229,11 +248,21 @@ func (c *Config) Validate() error {
 	}
 
 	if c.Batch.Concurrency <= 0 {
-		return fmt.Errorf("batch concurrency must be positive")
+		return errors.New("batch concurrency must be positive")
 	}
 
 	if c.Batch.Timeout <= 0 {
-		return fmt.Errorf("batch timeout must be positive")
+		return errors.New("batch timeout must be positive")
+	}
+
+	// WHOIS validation (only when enabled)
+	if c.WHOIS.Enabled {
+		if c.WHOIS.Timeout <= 0 {
+			return errors.New("WHOIS timeout must be positive")
+		}
+		if c.WHOIS.MaxResponseSize <= 0 {
+			return errors.New("WHOIS max response size must be positive")
+		}
 	}
 
 	return nil

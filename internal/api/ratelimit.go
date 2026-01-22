@@ -159,10 +159,7 @@ func (rl *IPRateLimiter) getSubnetLimiter(ip string) *rate.Limiter {
 	// Subnet limiter with lower rate (shared across IPs in subnet)
 	// Use 1/4 rate and 1/2 burst since multiple IPs share it
 	subnetRate := rl.rate / 4
-	subnetBurst := rl.burst / 2
-	if subnetBurst < 1 {
-		subnetBurst = 1
-	}
+	subnetBurst := max(rl.burst/2, 1)
 
 	entry := &rateLimiterEntry{
 		limiter:    rate.NewLimiter(subnetRate, subnetBurst),

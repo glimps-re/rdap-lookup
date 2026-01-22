@@ -152,11 +152,11 @@ type BatchResponse struct {
 
 // BatchResult represents a single result in a batch response.
 type BatchResult struct {
-	Type   string      `json:"type"`
-	Value  string      `json:"value"`
-	Data   interface{} `json:"data,omitempty"`
-	Cached bool        `json:"cached,omitempty"`
-	Error  string      `json:"error,omitempty"`
+	Type   string `json:"type"`
+	Value  string `json:"value"`
+	Data   any    `json:"data,omitempty"`
+	Cached bool   `json:"cached,omitempty"`
+	Error  string `json:"error,omitempty"`
 }
 
 // BatchStats contains statistics about a batch request.

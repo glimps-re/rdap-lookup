@@ -152,7 +152,7 @@ func TestMemoryCache_Clear(t *testing.T) {
 	ctx := context.Background()
 
 	// Add multiple entries
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		key := "test:clear:" + string(rune('a'+i))
 		err := cache.Set(ctx, key, []byte("value"), time.Hour, false)
 		if err != nil {
@@ -249,7 +249,7 @@ func TestMemoryCache_SizeLimit(t *testing.T) {
 	ctx := context.Background()
 
 	// Add entries that exceed size limit
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		key := "test:size:" + string(rune('a'+i))
 		value := make([]byte, 20) // 20 bytes each
 		err := cache.Set(ctx, key, value, time.Hour, false)

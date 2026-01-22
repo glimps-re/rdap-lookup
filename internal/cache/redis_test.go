@@ -167,7 +167,7 @@ func TestRedisCache_Clear(t *testing.T) {
 	ctx := context.Background()
 
 	// Add multiple entries
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		key := "test:clear:" + string(rune('a'+i))
 		err := cache.Set(ctx, key, []byte("value"), time.Hour, false)
 		if err != nil {
@@ -182,7 +182,7 @@ func TestRedisCache_Clear(t *testing.T) {
 	}
 
 	// Verify entries are gone
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		key := "test:clear:" + string(rune('a'+i))
 		_, err = cache.Get(ctx, key)
 		if !errors.Is(err, ErrCacheMiss) {
