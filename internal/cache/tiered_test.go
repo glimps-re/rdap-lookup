@@ -205,7 +205,7 @@ func TestTieredCache_GetOrFetch(t *testing.T) {
 	ctx := context.Background()
 	fetchCount := 0
 
-	fetch := func() ([]byte, error) {
+	fetch := func(_ context.Context) ([]byte, error) {
 		fetchCount++
 		return []byte("fetched value"), nil
 	}
@@ -249,7 +249,7 @@ func TestTieredCache_GetOrFetch_Singleflight(t *testing.T) {
 	ctx := context.Background()
 	var fetchCount atomic.Int32
 
-	fetch := func() ([]byte, error) {
+	fetch := func(_ context.Context) ([]byte, error) {
 		fetchCount.Add(1)
 		time.Sleep(50 * time.Millisecond) // Simulate slow fetch
 		return []byte("fetched"), nil
@@ -284,7 +284,7 @@ func TestTieredCache_GetOrFetchWithNegative(t *testing.T) {
 	notFoundErr := errors.New("not found")
 	fetchCount := 0
 
-	fetch := func() ([]byte, error) {
+	fetch := func(_ context.Context) ([]byte, error) {
 		fetchCount++
 		return nil, notFoundErr
 	}
@@ -342,6 +342,9 @@ func TestDefaultTieredCacheConfig(t *testing.T) {
 	}
 	if cfg.L2Config != nil {
 		t.Error("L2Config should be nil by default")
+	}
+	if cfg.FetchTimeout != 30*time.Second {
+		t.Errorf("FetchTimeout = %v, want 30s", cfg.FetchTimeout)
 	}
 }
 
@@ -536,8 +539,9 @@ func TestNewTieredCacheWithBackends(t *testing.T) {
 	defer func() { _ = l1.Close() }()
 
 	cfg := TieredCacheConfig{
-		DefaultTTL:  time.Hour,
-		NegativeTTL: time.Minute,
+		DefaultTTL:   time.Hour,
+		NegativeTTL:  time.Minute,
+		FetchTimeout: 30 * time.Second,
 	}
 
 	// Test with nil L2
@@ -550,5 +554,159 @@ func TestNewTieredCacheWithBackends(t *testing.T) {
 	}
 	if tc.HasL2() {
 		t.Error("HasL2() should be false")
+	}
+}
+
+// TestTieredCache_GetOrFetch_JoinedCallersSurviveFirstCallerCancel verifies that
+// when multiple goroutines join a singleflight for the same key, cancelling the
+// first caller's context does not abort the flight for all joined callers.
+func TestTieredCache_GetOrFetch_JoinedCallersSurviveFirstCallerCancel(t *testing.T) {
+	cfg := DefaultTieredCacheConfig()
+	cfg.FetchTimeout = 5 * time.Second
+	c, err := NewTieredCache(cfg)
+	if err != nil {
+		t.Fatalf("NewTieredCache() error = %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	fetchStarted := make(chan struct{})
+	fetchUnblock := make(chan struct{})
+
+	fetch := func(_ context.Context) ([]byte, error) {
+		close(fetchStarted)
+		<-fetchUnblock
+		return []byte("result"), nil
+	}
+
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	ctx2 := context.Background()
+
+	var wg sync.WaitGroup
+	var val1 []byte
+	var err1 error
+	var val2 []byte
+	var err2 error
+
+	// First caller starts the flight.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		val1, _, err1 = c.GetOrFetch(ctx1, "shared-key", fetch)
+	}()
+
+	// Wait until the fetch goroutine is running, then cancel ctx1.
+	<-fetchStarted
+	cancel1()
+
+	// Second caller joins the in-flight request.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		val2, _, err2 = c.GetOrFetch(ctx2, "shared-key", fetch)
+	}()
+
+	// Unblock the fetch so both callers can receive the result.
+	close(fetchUnblock)
+	wg.Wait()
+
+	// The fetch context is detached, so it should complete successfully.
+	// Both val1 and val2 should either have the result or an error —
+	// but val2 must never fail because ctx2 is still valid.
+	if err2 != nil {
+		t.Errorf("joined caller got error despite valid ctx: %v", err2)
+	}
+	if string(val2) != "result" {
+		t.Errorf("joined caller got value = %q, want %q", val2, "result")
+	}
+
+	// val1 may be "" if ctx1 was cancelled before the result was available,
+	// but the flight still ran so either the result or an error is acceptable.
+	_ = val1
+	_ = err1
+}
+
+// TestTieredCache_GetOrFetch_FetchTimeoutBoundsUnresponsiveFetch verifies that
+// FetchTimeout independently limits an unresponsive fetch even when the caller
+// context has no deadline.
+func TestTieredCache_GetOrFetch_FetchTimeoutBoundsUnresponsiveFetch(t *testing.T) {
+	cfg := DefaultTieredCacheConfig()
+	cfg.FetchTimeout = 50 * time.Millisecond // Very short for testing
+	c, err := NewTieredCache(cfg)
+	if err != nil {
+		t.Fatalf("NewTieredCache() error = %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	// fetch blocks until its context is cancelled.
+	fetch := func(fc context.Context) ([]byte, error) {
+		<-fc.Done()
+		return nil, fc.Err()
+	}
+
+	start := time.Now()
+	_, _, fetchErr := c.GetOrFetch(context.Background(), "blocked-key", fetch)
+	elapsed := time.Since(start)
+
+	// Should have returned within a reasonable window around FetchTimeout.
+	if fetchErr == nil {
+		t.Error("expected error from timed-out fetch, got nil")
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("fetch took %v, want <= 2s (FetchTimeout = 50ms)", elapsed)
+	}
+}
+
+// TestTieredCache_GetOrFetchWithNegative_FlightDetachedFromCallerCtx mirrors
+// TestTieredCache_GetOrFetch_JoinedCallersSurviveFirstCallerCancel for the
+// negative-caching variant.
+func TestTieredCache_GetOrFetchWithNegative_FlightDetachedFromCallerCtx(t *testing.T) {
+	cfg := DefaultTieredCacheConfig()
+	cfg.FetchTimeout = 5 * time.Second
+	c, err := NewTieredCache(cfg)
+	if err != nil {
+		t.Fatalf("NewTieredCache() error = %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	notFoundErr := errors.New("not found")
+	fetchStarted := make(chan struct{})
+	fetchUnblock := make(chan struct{})
+
+	fetch := func(_ context.Context) ([]byte, error) {
+		close(fetchStarted)
+		<-fetchUnblock
+		return []byte("data"), nil
+	}
+
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	ctx2 := context.Background()
+
+	var wg sync.WaitGroup
+	var err2 error
+	var val2 []byte
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, _, _ = c.GetOrFetchWithNegative(ctx1, "shared-neg-key", fetch, notFoundErr)
+	}()
+
+	<-fetchStarted
+	cancel1()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		val2, _, err2 = c.GetOrFetchWithNegative(ctx2, "shared-neg-key", fetch, notFoundErr)
+	}()
+
+	close(fetchUnblock)
+	wg.Wait()
+
+	if err2 != nil {
+		t.Errorf("joined caller got error: %v", err2)
+	}
+	if string(val2) != "data" {
+		t.Errorf("joined caller got value = %q, want %q", val2, "data")
 	}
 }

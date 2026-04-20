@@ -35,6 +35,12 @@ type TieredCacheConfig struct {
 	NegativeTTL    time.Duration
 	L1PromotionTTL time.Duration // TTL when promoting from L2 to L1
 	EnableL2Writes bool          // Write to L2 on Set (default true)
+	// FetchTimeout bounds the upstream fetch inside singleflight independently
+	// of the caller's context. This prevents a cancelled caller from aborting
+	// a flight that other joined callers are waiting on, and ensures that even
+	// a caller with no deadline cannot leave a fetch goroutine running forever.
+	// Defaults to 30s. Must be positive.
+	FetchTimeout time.Duration
 }
 
 // DefaultTieredCacheConfig returns default configuration.
@@ -46,6 +52,7 @@ func DefaultTieredCacheConfig() TieredCacheConfig {
 		NegativeTTL:    1 * time.Hour,
 		L1PromotionTTL: 5 * time.Minute,
 		EnableL2Writes: true,
+		FetchTimeout:   30 * time.Second,
 	}
 }
 
@@ -283,29 +290,45 @@ func (t *TieredCache) Close() error {
 
 // GetOrFetch retrieves from cache or fetches using the provided function.
 // Uses singleflight to prevent duplicate fetches for the same key.
-func (t *TieredCache) GetOrFetch(ctx context.Context, key string, fetch func() ([]byte, error)) ([]byte, bool, error) {
-	// Try cache first
+//
+// The fetch function receives a context that is deliberately detached from the
+// caller's ctx (via context.WithoutCancel) and bounded by FetchTimeout. This
+// means:
+//   - A cancelled caller does not abort a flight that other callers have joined.
+//   - The flight is still bounded in time by FetchTimeout (default 30s).
+//   - Cache reads on the initial probe still respect the caller's ctx.
+func (t *TieredCache) GetOrFetch(ctx context.Context, key string, fetch func(ctx context.Context) ([]byte, error)) ([]byte, bool, error) {
+	// Try cache first using caller ctx so the probe is cancellable.
 	entry, err := t.Get(ctx, key)
 	if err == nil {
 		return entry.Value, true, nil
 	}
 
-	// Use singleflight to prevent thundering herd
+	// Use singleflight to prevent thundering herd.
+	// The fetch ctx is detached from the caller ctx so that a cancelled caller
+	// does not abort a flight shared with other callers.
 	result, err, shared := t.group.Do(key, func() (any, error) {
-		// Double-check cache (another goroutine might have populated it)
-		entry, err := t.Get(ctx, key)
+		// Derive a fetch-scoped context that is independent of any single
+		// caller's lifetime. context.WithoutCancel severs cancellation
+		// propagation while preserving ctx values (requires Go 1.21+).
+		fetchCtx := context.WithoutCancel(ctx)
+		fetchCtx, cancel := context.WithTimeout(fetchCtx, t.config.FetchTimeout)
+		defer cancel()
+
+		// Double-check cache (another goroutine might have populated it).
+		entry, err := t.Get(fetchCtx, key)
 		if err == nil {
 			return entry.Value, nil
 		}
 
-		// Fetch from upstream
-		value, err := fetch()
+		// Fetch from upstream using the detached, timeout-bounded context.
+		value, err := fetch(fetchCtx)
 		if err != nil {
 			return nil, err
 		}
 
-		// Store in cache
-		_ = t.SetWithDefaultTTL(ctx, key, value, false)
+		// Store in cache.
+		_ = t.SetWithDefaultTTL(fetchCtx, key, value, false)
 
 		return value, nil
 	})
@@ -324,8 +347,11 @@ func (t *TieredCache) GetOrFetch(ctx context.Context, key string, fetch func() (
 
 // GetOrFetchWithNegative is like GetOrFetch but supports negative caching.
 // If fetch returns ErrNotFound, a negative cache entry is stored.
-func (t *TieredCache) GetOrFetchWithNegative(ctx context.Context, key string, fetch func() ([]byte, error), notFoundErr error) ([]byte, bool, error) {
-	// Try cache first
+//
+// The fetch context is detached from the caller's ctx in the same way as
+// GetOrFetch. See GetOrFetch for the full rationale.
+func (t *TieredCache) GetOrFetchWithNegative(ctx context.Context, key string, fetch func(ctx context.Context) ([]byte, error), notFoundErr error) ([]byte, bool, error) {
+	// Try cache first using caller ctx so the probe is cancellable.
 	entry, err := t.Get(ctx, key)
 	if err == nil {
 		if entry.Negative {
@@ -334,10 +360,15 @@ func (t *TieredCache) GetOrFetchWithNegative(ctx context.Context, key string, fe
 		return entry.Value, true, nil
 	}
 
-	// Use singleflight to prevent thundering herd
+	// Use singleflight to prevent thundering herd.
 	result, err, shared := t.group.Do(key, func() (any, error) {
-		// Double-check cache
-		entry, err := t.Get(ctx, key)
+		// Derive a fetch-scoped context detached from the caller ctx.
+		fetchCtx := context.WithoutCancel(ctx)
+		fetchCtx, cancel := context.WithTimeout(fetchCtx, t.config.FetchTimeout)
+		defer cancel()
+
+		// Double-check cache.
+		entry, err := t.Get(fetchCtx, key)
 		if err == nil {
 			if entry.Negative {
 				return nil, notFoundErr
@@ -345,19 +376,19 @@ func (t *TieredCache) GetOrFetchWithNegative(ctx context.Context, key string, fe
 			return entry.Value, nil
 		}
 
-		// Fetch from upstream
-		value, fetchErr := fetch()
+		// Fetch from upstream using the detached context.
+		value, fetchErr := fetch(fetchCtx)
 		if fetchErr != nil {
-			// Check if this is a "not found" error that should be negatively cached
+			// Check if this is a "not found" error that should be negatively cached.
 			if errors.Is(fetchErr, notFoundErr) {
-				_ = t.SetWithDefaultTTL(ctx, key, nil, true)
+				_ = t.SetWithDefaultTTL(fetchCtx, key, nil, true)
 				return nil, notFoundErr
 			}
 			return nil, fetchErr
 		}
 
-		// Store in cache
-		_ = t.SetWithDefaultTTL(ctx, key, value, false)
+		// Store in cache.
+		_ = t.SetWithDefaultTTL(fetchCtx, key, value, false)
 
 		return value, nil
 	})
