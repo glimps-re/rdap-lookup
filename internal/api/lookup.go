@@ -159,8 +159,8 @@ func (h *LookupHandler) LookupDomain(c echo.Context) error {
 	cacheKey := cache.BuildKey(cache.KeyPrefixDomain, name)
 
 	// Try to get from cache or fetch
-	data, cached, err := h.cache.GetOrFetchWithNegative(ctx, cacheKey, func() ([]byte, error) {
-		return h.fetchDomainData(ctx, name)
+	data, cached, err := h.cache.GetOrFetchWithNegative(ctx, cacheKey, func(fc context.Context) ([]byte, error) {
+		return h.fetchDomainData(fc, name)
 	}, rdap.ErrNotFound)
 
 	h.recordLookupMetrics("domain", err, cached)
@@ -269,11 +269,11 @@ func (h *LookupHandler) LookupIP(c echo.Context) error {
 	ctx := c.Request().Context()
 	cacheKey := cache.BuildKey(cache.KeyPrefixIP, addr)
 
-	data, cached, err := h.cache.GetOrFetchWithNegative(ctx, cacheKey, func() ([]byte, error) {
+	data, cached, err := h.cache.GetOrFetchWithNegative(ctx, cacheKey, func(fc context.Context) ([]byte, error) {
 		// Update resolver before query
 		h.client.SetResolver(h.bootstrap.Resolver())
 
-		resp, err := h.client.QueryIP(ctx, addr)
+		resp, err := h.client.QueryIP(fc, addr)
 		if err != nil {
 			return nil, err
 		}
@@ -329,11 +329,11 @@ func (h *LookupHandler) LookupASN(c echo.Context) error {
 	ctx := c.Request().Context()
 	cacheKey := cache.BuildKey(cache.KeyPrefixASN, asnStr)
 
-	data, cached, fetchErr := h.cache.GetOrFetchWithNegative(ctx, cacheKey, func() ([]byte, error) {
+	data, cached, fetchErr := h.cache.GetOrFetchWithNegative(ctx, cacheKey, func(fc context.Context) ([]byte, error) {
 		// Update resolver before query
 		h.client.SetResolver(h.bootstrap.Resolver())
 
-		resp, err := h.client.QueryASN(ctx, asn)
+		resp, err := h.client.QueryASN(fc, asn)
 		if err != nil {
 			return nil, err
 		}
@@ -396,8 +396,8 @@ func (h *LookupHandler) LookupEntity(c echo.Context) error {
 	// Include server URL in cache key to prevent cache poisoning
 	cacheKey := cache.BuildKey(cache.KeyPrefixEntity, serverURL+":"+handle)
 
-	data, cached, err := h.cache.GetOrFetchWithNegative(ctx, cacheKey, func() ([]byte, error) {
-		resp, err := h.client.QueryEntity(ctx, handle, serverURL)
+	data, cached, err := h.cache.GetOrFetchWithNegative(ctx, cacheKey, func(fc context.Context) ([]byte, error) {
+		resp, err := h.client.QueryEntity(fc, handle, serverURL)
 		if err != nil {
 			return nil, err
 		}
@@ -619,8 +619,8 @@ func (h *LookupHandler) lookupDomainData(ctx context.Context, name string) ([]by
 	name = strings.ToLower(strings.TrimSpace(name))
 	cacheKey := cache.BuildKey(cache.KeyPrefixDomain, name)
 
-	return h.cache.GetOrFetchWithNegative(ctx, cacheKey, func() ([]byte, error) {
-		return h.fetchDomainData(ctx, name)
+	return h.cache.GetOrFetchWithNegative(ctx, cacheKey, func(fc context.Context) ([]byte, error) {
+		return h.fetchDomainData(fc, name)
 	}, rdap.ErrNotFound)
 }
 
@@ -628,10 +628,10 @@ func (h *LookupHandler) lookupIPData(ctx context.Context, addr string) ([]byte, 
 	addr = strings.TrimSpace(addr)
 	cacheKey := cache.BuildKey(cache.KeyPrefixIP, addr)
 
-	return h.cache.GetOrFetchWithNegative(ctx, cacheKey, func() ([]byte, error) {
+	return h.cache.GetOrFetchWithNegative(ctx, cacheKey, func(fc context.Context) ([]byte, error) {
 		h.client.SetResolver(h.bootstrap.Resolver())
 
-		resp, err := h.client.QueryIP(ctx, addr)
+		resp, err := h.client.QueryIP(fc, addr)
 		if err != nil {
 			return nil, err
 		}
@@ -652,7 +652,7 @@ func (h *LookupHandler) lookupASNData(ctx context.Context, asnStr string) ([]byt
 	asnStr = strings.TrimPrefix(strings.ToUpper(strings.TrimSpace(asnStr)), "AS")
 	cacheKey := cache.BuildKey(cache.KeyPrefixASN, asnStr)
 
-	return h.cache.GetOrFetchWithNegative(ctx, cacheKey, func() ([]byte, error) {
+	return h.cache.GetOrFetchWithNegative(ctx, cacheKey, func(fc context.Context) ([]byte, error) {
 		asn64, err := strconv.ParseUint(asnStr, 10, 32)
 		if err != nil {
 			return nil, bootstrap.ErrInvalidInput
@@ -661,7 +661,7 @@ func (h *LookupHandler) lookupASNData(ctx context.Context, asnStr string) ([]byt
 
 		h.client.SetResolver(h.bootstrap.Resolver())
 
-		resp, err := h.client.QueryASN(ctx, asn)
+		resp, err := h.client.QueryASN(fc, asn)
 		if err != nil {
 			return nil, err
 		}
@@ -683,8 +683,8 @@ func (h *LookupHandler) lookupEntityData(ctx context.Context, handle, serverURL 
 	// Include server URL in cache key to prevent cache poisoning
 	cacheKey := cache.BuildKey(cache.KeyPrefixEntity, serverURL+":"+handle)
 
-	return h.cache.GetOrFetchWithNegative(ctx, cacheKey, func() ([]byte, error) {
-		resp, err := h.client.QueryEntity(ctx, handle, serverURL)
+	return h.cache.GetOrFetchWithNegative(ctx, cacheKey, func(fc context.Context) ([]byte, error) {
+		resp, err := h.client.QueryEntity(fc, handle, serverURL)
 		if err != nil {
 			return nil, err
 		}

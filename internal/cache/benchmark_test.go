@@ -145,7 +145,7 @@ func BenchmarkTieredCache_GetOrFetch_CacheHit(b *testing.B) {
 		}
 	}
 
-	fetch := func() ([]byte, error) {
+	fetch := func(_ context.Context) ([]byte, error) {
 		return value, nil
 	}
 
@@ -174,7 +174,7 @@ func BenchmarkTieredCache_GetOrFetch_CacheMiss(b *testing.B) {
 	ctx := context.Background()
 	value := []byte(`{"name": "example.com", "status": ["active"]}`)
 
-	fetch := func() ([]byte, error) {
+	fetch := func(_ context.Context) ([]byte, error) {
 		return value, nil
 	}
 
@@ -257,7 +257,7 @@ func BenchmarkTieredCache_Parallel_GetOrFetch(b *testing.B) {
 		}
 	}
 
-	fetch := func() ([]byte, error) {
+	fetch := func(_ context.Context) ([]byte, error) {
 		return value, nil
 	}
 
