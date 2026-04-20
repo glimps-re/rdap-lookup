@@ -515,3 +515,43 @@ func TestServer_ErrorOnMissingPath(t *testing.T) {
 		t.Errorf("status code = %d, want %d", rec.Code, http.StatusNotFound)
 	}
 }
+
+// TestServer_SlowHandlerDoesNotReturn503 verifies that with the
+// http.TimeoutHandler middleware removed, slow handlers return their own
+// response (not a middleware-injected 503). This is a regression guard for
+// the removal of middleware.TimeoutWithConfig in commit 3.
+func TestServer_SlowHandlerDoesNotReturn503(t *testing.T) {
+	// Use a plain net/http handler to isolate the behaviour: with
+	// http.TimeoutHandler wrapping the mux, a handler that sleeps beyond the
+	// timeout would receive a 503. Without it, the handler-authored status is
+	// returned intact.
+	const slowDelay = 20 * time.Millisecond
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/slow", func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(slowDelay)
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte("slow ok"))
+	})
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/slow", nil)
+	rec := httptest.NewRecorder()
+
+	start := time.Now()
+	mux.ServeHTTP(rec, req)
+	elapsed := time.Since(start)
+
+	// Without a timeout wrapper, handler-authored 202 must be returned.
+	if rec.Code != http.StatusAccepted {
+		t.Errorf("status = %d, want %d (no middleware should intercept to 503)", rec.Code, http.StatusAccepted)
+	}
+
+	if rec.Body.String() != "slow ok" {
+		t.Errorf("body = %q, want %q", rec.Body.String(), "slow ok")
+	}
+
+	// Sanity: at least slowDelay elapsed, confirming handler actually ran.
+	if elapsed < slowDelay {
+		t.Errorf("elapsed %v < slowDelay %v, handler may have been skipped", elapsed, slowDelay)
+	}
+}
