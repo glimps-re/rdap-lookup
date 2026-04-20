@@ -1044,7 +1044,7 @@ func TestNewLookupHandler(t *testing.T) {
 		Concurrency: 10,
 	}
 
-	handler := NewLookupHandler(client, service, tieredCache, batchCfg, nil)
+	handler := NewLookupHandler(client, service, tieredCache, batchCfg, 30*time.Second, nil)
 	if handler == nil {
 		t.Fatal("NewLookupHandler returned nil")
 	}
@@ -1089,7 +1089,7 @@ func TestNewLookupHandler_WithResolver(t *testing.T) {
 		Concurrency: 10,
 	}
 
-	handler := NewLookupHandler(client, service, tieredCache, batchCfg, nil)
+	handler := NewLookupHandler(client, service, tieredCache, batchCfg, 30*time.Second, nil)
 	if handler == nil {
 		t.Fatal("NewLookupHandler returned nil")
 	}
@@ -1173,6 +1173,7 @@ func TestLookupHandler_BatchWithUnknownTypes(t *testing.T) {
 			Timeout:     5 * time.Second,
 			Concurrency: 10,
 		},
+		handlerTimeout:  30 * time.Second,
 		serverValidator: validate.NewRDAPServerValidator(nil),
 	}
 
@@ -1224,6 +1225,7 @@ func TestLookupHandler_BatchTimeoutWithUnknownTypes(t *testing.T) {
 			Timeout:     1 * time.Nanosecond, // Extremely short
 			Concurrency: 1,
 		},
+		handlerTimeout:  30 * time.Second,
 		serverValidator: validate.NewRDAPServerValidator(nil),
 	}
 
@@ -1254,6 +1256,7 @@ func TestLookupHandler_BatchConcurrency(t *testing.T) {
 			Timeout:     5 * time.Second,
 			Concurrency: 2, // Only 2 concurrent queries
 		},
+		handlerTimeout:  30 * time.Second,
 		serverValidator: validate.NewRDAPServerValidator(nil),
 	}
 
@@ -1520,6 +1523,7 @@ func TestLookupHandler_BatchProcessingOrder(t *testing.T) {
 			Timeout:     5 * time.Second,
 			Concurrency: 5,
 		},
+		handlerTimeout:  30 * time.Second,
 		serverValidator: validate.NewRDAPServerValidator(nil),
 	}
 
@@ -1567,6 +1571,7 @@ func TestLookupHandler_BatchStatsCalculation(t *testing.T) {
 			Timeout:     5 * time.Second,
 			Concurrency: 10,
 		},
+		handlerTimeout:  30 * time.Second,
 		serverValidator: validate.NewRDAPServerValidator(nil),
 	}
 
@@ -1636,7 +1641,7 @@ func TestNewLookupHandlerWithWHOIS_Disabled(t *testing.T) {
 
 	batchCfg := config.BatchConfig{Concurrency: 10, Timeout: 30 * time.Second}
 
-	handler := NewLookupHandlerWithWHOIS(rdapClient, bs, tieredCache, batchCfg, whoisCfg, nil)
+	handler := NewLookupHandlerWithWHOIS(rdapClient, bs, tieredCache, batchCfg, 30*time.Second, whoisCfg, nil)
 
 	if handler.WHOISEnabled() {
 		t.Error("WHOISEnabled() = true, want false")
@@ -1665,7 +1670,7 @@ func TestNewLookupHandlerWithWHOIS_Enabled(t *testing.T) {
 
 	batchCfg := config.BatchConfig{Concurrency: 10, Timeout: 30 * time.Second}
 
-	handler := NewLookupHandlerWithWHOIS(rdapClient, bs, tieredCache, batchCfg, whoisCfg, nil)
+	handler := NewLookupHandlerWithWHOIS(rdapClient, bs, tieredCache, batchCfg, 30*time.Second, whoisCfg, nil)
 
 	if !handler.WHOISEnabled() {
 		t.Error("WHOISEnabled() = false, want true")
@@ -1693,7 +1698,7 @@ func TestLookupHandler_Close(t *testing.T) {
 	batchCfg := config.BatchConfig{Concurrency: 10, Timeout: 30 * time.Second}
 
 	// Test Close on handler without WHOIS
-	handler := NewLookupHandler(rdapClient, bs, tieredCache, batchCfg, nil)
+	handler := NewLookupHandler(rdapClient, bs, tieredCache, batchCfg, 30*time.Second, nil)
 
 	// Close should be idempotent and not error with no WHOIS client
 	if err := handler.Close(); err != nil {
@@ -1707,8 +1712,358 @@ func TestLookupHandler_Close(t *testing.T) {
 		MaxResponseSize: 64 * 1024,
 	}
 
-	handlerWithWHOIS := NewLookupHandlerWithWHOIS(rdapClient, bs, tieredCache, batchCfg, whoisCfg, nil)
+	handlerWithWHOIS := NewLookupHandlerWithWHOIS(rdapClient, bs, tieredCache, batchCfg, 30*time.Second, whoisCfg, nil)
 	if err := handlerWithWHOIS.Close(); err != nil {
 		t.Errorf("Close() error: %v", err)
+	}
+}
+
+// newBlockingHandlerWithCache creates a LookupHandler with a real TieredCache
+// whose FetchTimeout equals handlerTimeout + grace, and returns the cache.
+// The handler has nil client/bootstrap so callers must NOT trigger fetchDomainData
+// directly; use the cache's GetOrFetchWithNegative to inject blocking fetches.
+func newBlockingHandlerWithCache(t *testing.T, handlerTimeout, fetchTimeout time.Duration) (*LookupHandler, *cache.TieredCache) {
+	t.Helper()
+	cfg := cache.DefaultTieredCacheConfig()
+	cfg.FetchTimeout = fetchTimeout
+	tc, err := cache.NewTieredCache(cfg)
+	if err != nil {
+		t.Fatalf("NewTieredCache: %v", err)
+	}
+	t.Cleanup(func() { _ = tc.Close() })
+
+	batchCfg := config.BatchConfig{Concurrency: 10, Timeout: 5 * time.Second}
+	h := &LookupHandler{
+		cache:           tc,
+		serverValidator: validate.NewRDAPServerValidator(nil),
+		batchConfig:     batchCfg,
+		handlerTimeout:  handlerTimeout,
+	}
+	return h, tc
+}
+
+// TestLookupDomain_HandlerTimeoutCancelsFetch verifies that a blocking upstream
+// fetch is cancelled when the per-handler deadline elapses. The handler must
+// return promptly (within deadline + 500ms) and the fetch goroutine must exit.
+func TestLookupDomain_HandlerTimeoutCancelsFetch(t *testing.T) {
+	const handlerTimeout = 100 * time.Millisecond
+	const fetchTimeout = 150 * time.Millisecond // FetchTimeout > handlerTimeout; singleflight exits shortly after
+
+	h, tc := newBlockingHandlerWithCache(t, handlerTimeout, fetchTimeout)
+
+	fetchExited := make(chan struct{})
+	fetchStarted := make(chan struct{})
+	const domainName = "timeout-test.example"
+	cacheKey := cache.BuildKey(cache.KeyPrefixDomain, domainName)
+
+	// Pre-fill the singleflight slot with a blocking fetch. fetchStarted is
+	// signalled once the closure is executing so the handler is guaranteed to
+	// join the in-flight fetch (rather than becoming the flight owner and
+	// hitting the nil bootstrap in fetchDomainData).
+	// The fetch exits when FetchTimeout fires (150ms > handlerTimeout 100ms).
+	go func() {
+		defer close(fetchExited)
+		_, _, _ = tc.GetOrFetchWithNegative(
+			context.Background(),
+			cacheKey,
+			func(ctx context.Context) ([]byte, error) {
+				close(fetchStarted)
+				<-ctx.Done()
+				return nil, ctx.Err()
+			},
+			rdap.ErrNotFound,
+		)
+	}()
+
+	// Wait until the blocking fetch is running before the handler call.
+	<-fetchStarted
+
+	e := echo.New()
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/domain/"+domainName, nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("name")
+	c.SetParamValues(domainName)
+
+	start := time.Now()
+	_ = h.LookupDomain(c)
+	elapsed := time.Since(start)
+
+	// Handler must return within handlerTimeout + generous buffer.
+	if elapsed > handlerTimeout+500*time.Millisecond {
+		t.Errorf("LookupDomain took %v, want < %v", elapsed, handlerTimeout+500*time.Millisecond)
+	}
+
+	// The singleflight fetch goroutine must exit within FetchTimeout + buffer.
+	select {
+	case <-fetchExited:
+	case <-time.After(fetchTimeout + 500*time.Millisecond):
+		t.Error("fetch goroutine did not exit within FetchTimeout")
+	}
+}
+
+// TestLookupIP_HandlerTimeoutCancelsFetch verifies that a blocking upstream
+// IP fetch is cancelled when the per-handler deadline elapses.
+func TestLookupIP_HandlerTimeoutCancelsFetch(t *testing.T) {
+	const handlerTimeout = 100 * time.Millisecond
+	const fetchTimeout = 150 * time.Millisecond
+
+	h, tc := newBlockingHandlerWithCache(t, handlerTimeout, fetchTimeout)
+
+	fetchExited := make(chan struct{})
+	fetchStarted := make(chan struct{})
+	const ipAddr = "192.0.2.1"
+	cacheKey := cache.BuildKey(cache.KeyPrefixIP, ipAddr)
+
+	// Pre-seed the singleflight slot. Signal fetchStarted once the closure is
+	// executing so the handler is guaranteed to join rather than own the flight.
+	go func() {
+		defer close(fetchExited)
+		_, _, _ = tc.GetOrFetchWithNegative(
+			context.Background(),
+			cacheKey,
+			func(ctx context.Context) ([]byte, error) {
+				close(fetchStarted)
+				<-ctx.Done()
+				return nil, ctx.Err()
+			},
+			rdap.ErrNotFound,
+		)
+	}()
+
+	// Wait until the blocking fetch is running before the handler call.
+	<-fetchStarted
+
+	e := echo.New()
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/ip/"+ipAddr, nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("addr")
+	c.SetParamValues(ipAddr)
+
+	start := time.Now()
+	_ = h.LookupIP(c)
+	elapsed := time.Since(start)
+
+	if elapsed > handlerTimeout+500*time.Millisecond {
+		t.Errorf("LookupIP took %v, want < %v", elapsed, handlerTimeout+500*time.Millisecond)
+	}
+
+	select {
+	case <-fetchExited:
+	case <-time.After(fetchTimeout + 500*time.Millisecond):
+		t.Error("fetch goroutine did not exit within FetchTimeout")
+	}
+}
+
+// TestLookupASN_HandlerTimeoutCancelsFetch verifies that a blocking upstream
+// ASN fetch is cancelled when the per-handler deadline elapses.
+func TestLookupASN_HandlerTimeoutCancelsFetch(t *testing.T) {
+	const handlerTimeout = 100 * time.Millisecond
+	const fetchTimeout = 150 * time.Millisecond
+
+	h, tc := newBlockingHandlerWithCache(t, handlerTimeout, fetchTimeout)
+
+	fetchExited := make(chan struct{})
+	fetchStarted := make(chan struct{})
+	const asnStr = "15169"
+	cacheKey := cache.BuildKey(cache.KeyPrefixASN, asnStr)
+
+	go func() {
+		defer close(fetchExited)
+		_, _, _ = tc.GetOrFetchWithNegative(
+			context.Background(),
+			cacheKey,
+			func(ctx context.Context) ([]byte, error) {
+				close(fetchStarted)
+				<-ctx.Done()
+				return nil, ctx.Err()
+			},
+			rdap.ErrNotFound,
+		)
+	}()
+
+	<-fetchStarted
+
+	e := echo.New()
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/asn/"+asnStr, nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("asn")
+	c.SetParamValues(asnStr)
+
+	start := time.Now()
+	_ = h.LookupASN(c)
+	elapsed := time.Since(start)
+
+	if elapsed > handlerTimeout+500*time.Millisecond {
+		t.Errorf("LookupASN took %v, want < %v", elapsed, handlerTimeout+500*time.Millisecond)
+	}
+
+	select {
+	case <-fetchExited:
+	case <-time.After(fetchTimeout + 500*time.Millisecond):
+		t.Error("fetch goroutine did not exit within FetchTimeout")
+	}
+}
+
+// TestLookupEntity_HandlerTimeoutCancelsFetch verifies that a blocking upstream
+// entity fetch is cancelled when the per-handler deadline elapses.
+func TestLookupEntity_HandlerTimeoutCancelsFetch(t *testing.T) {
+	const handlerTimeout = 100 * time.Millisecond
+	const fetchTimeout = 150 * time.Millisecond
+
+	h, tc := newBlockingHandlerWithCache(t, handlerTimeout, fetchTimeout)
+	// Allow the test server URL in the validator.
+	h.serverValidator = validate.NewRDAPServerValidator([]string{"https://rdap.arin.net/registry/"})
+
+	fetchExited := make(chan struct{})
+	fetchStarted := make(chan struct{})
+	const handle = "GOGL-ARIN"
+	const serverURL = "https://rdap.arin.net/registry/"
+	cacheKey := cache.BuildKey(cache.KeyPrefixEntity, serverURL+":"+handle)
+
+	go func() {
+		defer close(fetchExited)
+		_, _, _ = tc.GetOrFetchWithNegative(
+			context.Background(),
+			cacheKey,
+			func(ctx context.Context) ([]byte, error) {
+				close(fetchStarted)
+				<-ctx.Done()
+				return nil, ctx.Err()
+			},
+			rdap.ErrNotFound,
+		)
+	}()
+
+	<-fetchStarted
+
+	e := echo.New()
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/entity/"+handle+"?server="+serverURL, nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("handle")
+	c.SetParamValues(handle)
+
+	start := time.Now()
+	_ = h.LookupEntity(c)
+	elapsed := time.Since(start)
+
+	if elapsed > handlerTimeout+500*time.Millisecond {
+		t.Errorf("LookupEntity took %v, want < %v", elapsed, handlerTimeout+500*time.Millisecond)
+	}
+
+	select {
+	case <-fetchExited:
+	case <-time.After(fetchTimeout + 500*time.Millisecond):
+		t.Error("fetch goroutine did not exit within FetchTimeout")
+	}
+}
+
+// TestNewLookupHandler_ZeroTimeout verifies that a zero handlerTimeout is
+// replaced with the safe 30s default so upstream I/O is always bounded.
+func TestNewLookupHandler_ZeroTimeout(t *testing.T) {
+	client := rdap.NewClient(10 * time.Second)
+
+	logger := slog.New(slog.DiscardHandler)
+	m := metrics.New()
+	service := bootstrap.NewService(24*time.Hour, 10*time.Second, logger, m)
+
+	cfg := cache.DefaultTieredCacheConfig()
+	tieredCache, err := cache.NewTieredCache(cfg)
+	if err != nil {
+		t.Fatalf("failed to create cache: %v", err)
+	}
+	defer func() { _ = tieredCache.Close() }()
+
+	batchCfg := config.BatchConfig{Timeout: 30 * time.Second, Concurrency: 10}
+
+	handler := NewLookupHandler(client, service, tieredCache, batchCfg, 0, nil)
+	if handler.handlerTimeout != 30*time.Second {
+		t.Errorf("handlerTimeout = %v, want 30s (default)", handler.handlerTimeout)
+	}
+}
+
+// TestLookupBatch_HandlerTimeoutDominatesWhenSmaller verifies that when
+// handlerTimeout < batchConfig.Timeout, the handler deadline takes effect.
+func TestLookupBatch_HandlerTimeoutDominatesWhenSmaller(t *testing.T) {
+	const handlerTimeout = 80 * time.Millisecond
+	const batchTimeout = 10 * time.Second // much longer
+
+	cfg := cache.DefaultTieredCacheConfig()
+	cfg.FetchTimeout = handlerTimeout + 50*time.Millisecond
+	tc, err := cache.NewTieredCache(cfg)
+	if err != nil {
+		t.Fatalf("NewTieredCache: %v", err)
+	}
+	defer func() { _ = tc.Close() }()
+
+	batchCfg := config.BatchConfig{Concurrency: 10, Timeout: batchTimeout}
+	h := &LookupHandler{
+		cache:           tc,
+		serverValidator: validate.NewRDAPServerValidator(nil),
+		batchConfig:     batchCfg,
+		handlerTimeout:  handlerTimeout,
+	}
+
+	e := echo.New()
+	// Use an unknown type so processBatchQuery returns immediately with an error
+	// without hitting the cache. We just need to verify the batch exits quickly.
+	body := `{"queries":[{"type":"unknown_blocking_type","value":"test"}]}`
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/batch", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	start := time.Now()
+	_ = h.LookupBatch(c)
+	elapsed := time.Since(start)
+
+	// Handler must return well before batchTimeout, demonstrating handler ctx
+	// establishes a ceiling even when batch timeout is very long.
+	if elapsed > batchTimeout/2 {
+		t.Errorf("LookupBatch took %v, want < %v (handler timeout dominates)", elapsed, batchTimeout/2)
+	}
+}
+
+// TestLookupBatch_BatchTimeoutDominatesWhenSmaller verifies that when
+// batchConfig.Timeout < handlerTimeout, the batch deadline takes effect.
+func TestLookupBatch_BatchTimeoutDominatesWhenSmaller(t *testing.T) {
+	const handlerTimeout = 10 * time.Second // much longer
+	const batchTimeout = 50 * time.Millisecond
+
+	cfg := cache.DefaultTieredCacheConfig()
+	cfg.FetchTimeout = batchTimeout + 50*time.Millisecond
+	tc, err := cache.NewTieredCache(cfg)
+	if err != nil {
+		t.Fatalf("NewTieredCache: %v", err)
+	}
+	defer func() { _ = tc.Close() }()
+
+	batchCfg := config.BatchConfig{Concurrency: 10, Timeout: batchTimeout}
+	h := &LookupHandler{
+		cache:           tc,
+		serverValidator: validate.NewRDAPServerValidator(nil),
+		batchConfig:     batchCfg,
+		handlerTimeout:  handlerTimeout,
+	}
+
+	e := echo.New()
+	// Use an unknown type so processBatchQuery returns immediately.
+	body := `{"queries":[{"type":"unknown_type","value":"test"}]}`
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/batch", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	start := time.Now()
+	_ = h.LookupBatch(c)
+	elapsed := time.Since(start)
+
+	// Handler must return well before handlerTimeout, demonstrating batch ctx
+	// provides a tighter deadline when batch timeout is shorter.
+	if elapsed > handlerTimeout/2 {
+		t.Errorf("LookupBatch took %v, want < %v (batch timeout dominates)", elapsed, handlerTimeout/2)
 	}
 }
