@@ -110,15 +110,17 @@ func run() error {
 	tieredCache.SetMetrics(metrics.NewCacheMetricsCollector(m))
 
 	// Create lookup handler (with optional WHOIS fallback)
+	// handlerTimeout mirrors Server.WriteTimeout so per-handler deadlines
+	// cancel upstream I/O before the HTTP connection deadline elapses.
 	var lookupHandler *api.LookupHandler
 	if cfg.WHOIS.Enabled {
 		logger.Info("WHOIS fallback enabled",
 			slog.Duration("timeout", cfg.WHOIS.Timeout),
 			slog.Int64("max_response_size", cfg.WHOIS.MaxResponseSize),
 		)
-		lookupHandler = api.NewLookupHandlerWithWHOIS(rdapClient, bs, tieredCache, cfg.Batch, cfg.WHOIS, m)
+		lookupHandler = api.NewLookupHandlerWithWHOIS(rdapClient, bs, tieredCache, cfg.Batch, cfg.Server.WriteTimeout, cfg.WHOIS, m)
 	} else {
-		lookupHandler = api.NewLookupHandler(rdapClient, bs, tieredCache, cfg.Batch, m)
+		lookupHandler = api.NewLookupHandler(rdapClient, bs, tieredCache, cfg.Batch, cfg.Server.WriteTimeout, m)
 	}
 	defer func() { _ = lookupHandler.Close() }()
 
