@@ -468,6 +468,12 @@ func TestServer_RateLimitMiddlewareWithLogging_LimitsAPI(t *testing.T) {
 	}
 
 	server := NewServer(cfg, logger, m, buildInfo, nil)
+	// Stop the rate limiter's cleanupLoop goroutine when the test ends.
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	})
 
 	// First request to a non-operational endpoint should succeed
 	req1 := httptest.NewRequest(http.MethodGet, "/api/v1/domain/test.com", nil)
