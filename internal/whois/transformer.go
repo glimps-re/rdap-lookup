@@ -118,7 +118,13 @@ func buildAddress(pe *ParsedEntity) string {
 		return ""
 	}
 
-	return strings.Join(parts, ", ")
+	result := parts[0]
+	var resultSb121 strings.Builder
+	for i := 1; i < len(parts); i++ {
+		resultSb121.WriteString(", " + parts[i])
+	}
+	result += resultSb121.String()
+	return result
 }
 
 // formatTime formats a time pointer to RFC3339 string in UTC.

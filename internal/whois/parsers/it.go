@@ -85,7 +85,8 @@ func (p *ITParser) Parse(response string, domain string) (*whois.ParseResult, er
 	// Parse the response line by line
 	currentSection := ""
 
-	for line := range strings.SplitSeq(response, "\n") {
+	for i := range lines {
+		line := lines[i]
 		trimmedLine := strings.TrimSpace(line)
 
 		// Skip empty lines and comments
@@ -122,8 +123,8 @@ func (p *ITParser) Parse(response string, domain string) (*whois.ParseResult, er
 		}
 
 		// Parse based on section
-		key, value, found := strings.Cut(trimmedLine, ":")
-		if !found {
+		before, after, ok := strings.Cut(trimmedLine, ":")
+		if !ok {
 			// No colon - could be nameserver or continuation
 			if currentSection == "nameservers" {
 				ns := normalizeITNameserver(trimmedLine)
@@ -134,8 +135,8 @@ func (p *ITParser) Parse(response string, domain string) (*whois.ParseResult, er
 			continue
 		}
 
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
+		key := strings.TrimSpace(before)
+		value := strings.TrimSpace(after)
 
 		if value == "" {
 			continue

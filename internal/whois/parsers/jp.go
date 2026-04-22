@@ -74,7 +74,9 @@ func (p *JPParser) Parse(response string, domain string) (*whois.ParseResult, er
 	}
 
 	// Parse the response line by line
-	for line := range strings.SplitSeq(response, "\n") {
+	lines := strings.SplitSeq(response, "\n")
+
+	for line := range lines {
 		trimmedLine := strings.TrimSpace(line)
 
 		// Skip empty lines and comments

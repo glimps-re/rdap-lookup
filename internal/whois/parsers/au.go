@@ -66,7 +66,9 @@ func (p *AUParser) Parse(response string, domain string) (*whois.ParseResult, er
 	}
 
 	// Parse the response line by line
-	for line := range strings.SplitSeq(response, "\n") {
+	lines := strings.SplitSeq(response, "\n")
+
+	for line := range lines {
 		line = strings.TrimSpace(line)
 
 		// Skip empty lines and comments
@@ -75,13 +77,13 @@ func (p *AUParser) Parse(response string, domain string) (*whois.ParseResult, er
 		}
 
 		// Parse key-value pairs
-		key, value, found := strings.Cut(line, ":")
-		if !found {
+		before, after, ok := strings.Cut(line, ":")
+		if !ok {
 			continue
 		}
 
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
+		key := strings.TrimSpace(before)
+		value := strings.TrimSpace(after)
 
 		if value == "" {
 			continue

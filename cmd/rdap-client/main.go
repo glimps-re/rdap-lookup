@@ -297,7 +297,8 @@ func parseSize(s string) (int64, error) {
 	}
 
 	for _, s2 := range suffixes {
-		if numStr, found := strings.CutSuffix(s, s2.suffix); found {
+		if before, ok := strings.CutSuffix(s, s2.suffix); ok {
+			numStr := before
 			num, err := strconv.ParseInt(numStr, 10, 64)
 			if err != nil {
 				return 0, fmt.Errorf("invalid size: %s", s)
