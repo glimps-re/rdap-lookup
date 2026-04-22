@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -1029,7 +1028,7 @@ func TestNewLookupHandler(t *testing.T) {
 	client := rdap.NewClient(10 * time.Second)
 
 	// Create a service (not started, so resolver is nil initially)
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := slog.New(slog.DiscardHandler)
 	m := metrics.New()
 	service := bootstrap.NewService(24*time.Hour, 10*time.Second, logger, m)
 
@@ -1068,7 +1067,7 @@ func TestNewLookupHandler_WithResolver(t *testing.T) {
 	// Create handler with a resolver that has servers
 	client := rdap.NewClient(10 * time.Second)
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := slog.New(slog.DiscardHandler)
 	m := metrics.New()
 	service := bootstrap.NewService(24*time.Hour, 10*time.Second, logger, m)
 
@@ -1628,7 +1627,7 @@ func TestNewLookupHandlerWithWHOIS_Disabled(t *testing.T) {
 		MaxResponseSize: 64 * 1024,
 	}
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := slog.New(slog.DiscardHandler)
 	m := metrics.New()
 
 	rdapClient := rdap.NewClient(10 * time.Second)
@@ -1657,7 +1656,7 @@ func TestNewLookupHandlerWithWHOIS_Enabled(t *testing.T) {
 		MaxResponseSize: 64 * 1024,
 	}
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := slog.New(slog.DiscardHandler)
 	m := metrics.New()
 
 	rdapClient := rdap.NewClient(10 * time.Second)
@@ -1684,7 +1683,7 @@ func TestNewLookupHandlerWithWHOIS_Enabled(t *testing.T) {
 }
 
 func TestLookupHandler_Close(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := slog.New(slog.DiscardHandler)
 	m := metrics.New()
 
 	rdapClient := rdap.NewClient(10 * time.Second)
