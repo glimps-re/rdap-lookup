@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -633,9 +634,10 @@ Examples:
 		if err := scanner.Err(); err != nil {
 			return fmt.Errorf("error reading stdin: %w", err)
 		}
-	} else if _, err := os.Stat(remaining[0]); err == nil {
-		// Read from file
-		file, err := os.Open(remaining[0])
+	} else if batchPath, ok := resolveBatchFile(remaining[0]); ok {
+		// Read from file. Path is a user-supplied CLI argument by design,
+		// already cleaned via filepath.Clean in resolveBatchFile.
+		file, err := os.Open(batchPath) //nolint:gosec // G304: user-supplied CLI arg by design
 		if err != nil {
 			return fmt.Errorf("failed to open file: %w", err)
 		}
@@ -686,6 +688,16 @@ Examples:
 	}
 
 	return outputResult(resp, cfg.Output, formatBatchTable)
+}
+
+// resolveBatchFile cleans a user-supplied batch file path and verifies it
+// points to an existing file. Returns the cleaned path and true on success.
+func resolveBatchFile(arg string) (string, bool) {
+	p := filepath.Clean(arg)
+	if _, err := os.Stat(p); err != nil {
+		return "", false
+	}
+	return p, true
 }
 
 func parseBatchQuery(s string) (rdaplookup.BatchQuery, error) {

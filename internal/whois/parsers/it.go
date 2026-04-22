@@ -84,9 +84,8 @@ func (p *ITParser) Parse(response string, domain string) (*whois.ParseResult, er
 
 	// Parse the response line by line
 	currentSection := ""
-
-	for i := range lines {
-		line := lines[i]
+	lines := strings.SplitSeq(response, "\n")
+	for line := range lines {
 		trimmedLine := strings.TrimSpace(line)
 
 		// Skip empty lines and comments

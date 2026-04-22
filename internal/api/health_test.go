@@ -38,7 +38,7 @@ func TestHealthChecker_SetReady(t *testing.T) {
 
 func TestHealthChecker_ReadinessHandler_NotReady(t *testing.T) {
 	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ready", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
@@ -66,7 +66,7 @@ func TestHealthChecker_ReadinessHandler_NotReady(t *testing.T) {
 
 func TestHealthChecker_ReadinessHandler_Ready(t *testing.T) {
 	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ready", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
@@ -94,7 +94,7 @@ func TestHealthChecker_ReadinessHandler_Ready(t *testing.T) {
 
 func TestHealthChecker_LivenessHandler(t *testing.T) {
 	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
@@ -183,7 +183,7 @@ func (m *mockL2Cache) Ping(_ context.Context) error {
 
 func TestHealthChecker_ReadinessHandler_WithL2CacheHealthy(t *testing.T) {
 	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ready", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
@@ -216,7 +216,7 @@ func TestHealthChecker_ReadinessHandler_WithL2CacheHealthy(t *testing.T) {
 
 func TestHealthChecker_ReadinessHandler_WithL2CacheDegraded(t *testing.T) {
 	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ready", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
@@ -258,7 +258,7 @@ func TestHealthChecker_SetLogger(t *testing.T) {
 	h.SetL2Cache(&mockL2Cache{pingErr: errors.New("test error")})
 
 	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ready", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 

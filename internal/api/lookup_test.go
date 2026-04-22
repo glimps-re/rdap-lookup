@@ -128,7 +128,7 @@ func TestLookupHandler_DomainValidation(t *testing.T) {
 	e := echo.New()
 
 	// Test with empty domain name
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/domain/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/domain/", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 	c.SetParamNames("name")
@@ -158,7 +158,7 @@ func TestLookupHandler_DomainValidation(t *testing.T) {
 func TestLookupHandler_IPValidation(t *testing.T) {
 	e := echo.New()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/ip/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/ip/", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 	c.SetParamNames("addr")
@@ -209,7 +209,7 @@ func TestLookupHandler_ASNValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/asn/"+tt.asn, nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/asn/"+tt.asn, nil)
 			rec := httptest.NewRecorder()
 			c := e.NewContext(req, rec)
 			c.SetParamNames("asn")
@@ -274,7 +274,7 @@ func TestLookupHandler_EntityValidation(t *testing.T) {
 			if tt.serverURL != "" {
 				url += "?server=" + tt.serverURL
 			}
-			req := httptest.NewRequest(http.MethodGet, url, nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 			rec := httptest.NewRecorder()
 			c := e.NewContext(req, rec)
 			c.SetParamNames("handle")
@@ -327,7 +327,7 @@ func TestLookupHandler_BatchValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/batch", strings.NewReader(tt.body))
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/batch", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", "application/json")
 			rec := httptest.NewRecorder()
 			c := e.NewContext(req, rec)
@@ -364,7 +364,7 @@ func TestLookupHandler_BatchMaxQueries(t *testing.T) {
 	}
 
 	body, _ := json.Marshal(BatchRequest{Queries: queries})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/batch", strings.NewReader(string(body)))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/batch", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
@@ -530,7 +530,7 @@ func TestLookupHandler_HandleError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
 			rec := httptest.NewRecorder()
 			c := e.NewContext(req, rec)
 
@@ -581,7 +581,7 @@ func TestLookupHandler_RespondWithData(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
 			rec := httptest.NewRecorder()
 			c := e.NewContext(req, rec)
 
@@ -619,7 +619,7 @@ func TestLookupHandler_EntityServerValidation(t *testing.T) {
 		serverValidator: validate.NewRDAPServerValidator(nil), // Empty allowlist
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/entity/ABC-123?server=https://evil.com", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/entity/ABC-123?server=https://evil.com", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 	c.SetParamNames("handle")
@@ -668,7 +668,7 @@ func TestLookupHandler_ASNWithASPrefix(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/asn/"+tt.asn, nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/asn/"+tt.asn, nil)
 			rec := httptest.NewRecorder()
 			c := e.NewContext(req, rec)
 			c.SetParamNames("asn")
@@ -704,7 +704,7 @@ func TestLookupHandler_InvalidIPAddress(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/ip/"+tt.addr, nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/ip/"+tt.addr, nil)
 			rec := httptest.NewRecorder()
 			c := e.NewContext(req, rec)
 			c.SetParamNames("addr")
@@ -737,7 +737,7 @@ func TestLookupHandler_InvalidDomainName(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Use a simple URL path and set the param value separately
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/domain/test", nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/domain/test", nil)
 			rec := httptest.NewRecorder()
 			c := e.NewContext(req, rec)
 			c.SetParamNames("name")
@@ -907,7 +907,7 @@ func TestLookupHandler_ValidDomain(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/domain/"+tt.domain, nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/domain/"+tt.domain, nil)
 			rec := httptest.NewRecorder()
 			c := e.NewContext(req, rec)
 			c.SetParamNames("name")
@@ -944,7 +944,7 @@ func TestLookupHandler_ValidIP(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/ip/"+tt.addr, nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/ip/"+tt.addr, nil)
 			rec := httptest.NewRecorder()
 			c := e.NewContext(req, rec)
 			c.SetParamNames("addr")
@@ -979,7 +979,7 @@ func TestLookupHandler_ValidASN(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/asn/"+tt.asn, nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/asn/"+tt.asn, nil)
 			rec := httptest.NewRecorder()
 			c := e.NewContext(req, rec)
 			c.SetParamNames("asn")
@@ -1007,7 +1007,7 @@ func TestLookupHandler_EntityWithAllowedServer(t *testing.T) {
 		serverValidator: validate.NewRDAPServerValidator(allowedServers),
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/entity/ABC-123?server=https://rdap.arin.net/registry/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/entity/ABC-123?server=https://rdap.arin.net/registry/", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 	c.SetParamNames("handle")
@@ -1185,7 +1185,7 @@ func TestLookupHandler_BatchWithUnknownTypes(t *testing.T) {
 		{"type":"entity","value":"TEST-123"}
 	]}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/batch", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/batch", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
@@ -1231,7 +1231,7 @@ func TestLookupHandler_BatchTimeoutWithUnknownTypes(t *testing.T) {
 
 	// Use unknown types that don't need cache
 	body := `{"queries":[{"type":"unknown","value":"test"}]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/batch", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/batch", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
@@ -1267,7 +1267,7 @@ func TestLookupHandler_BatchConcurrency(t *testing.T) {
 	}
 	body, _ := json.Marshal(BatchRequest{Queries: queries})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/batch", strings.NewReader(string(body)))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/batch", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
@@ -1346,7 +1346,7 @@ func TestLookupHandler_HandleError_ServerError(t *testing.T) {
 	e := echo.New()
 	handler := &LookupHandler{}
 
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
@@ -1373,7 +1373,7 @@ func TestLookupHandler_HandleError_Timeout(t *testing.T) {
 	e := echo.New()
 	handler := &LookupHandler{}
 
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
@@ -1411,7 +1411,7 @@ func TestLookupHandler_Entity_InvalidServerURLFormat(t *testing.T) {
 	}
 
 	// Provide a malformed URL
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/entity/ABC-123?server=not-a-valid-url", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/entity/ABC-123?server=not-a-valid-url", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 	c.SetParamNames("handle")
@@ -1445,7 +1445,7 @@ func TestLookupHandler_Entity_ServerNotInAllowlist(t *testing.T) {
 	}
 
 	// Try to use a different server not in allowlist
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/entity/ABC-123?server=https://rdap.ripe.net/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/entity/ABC-123?server=https://rdap.ripe.net/", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 	c.SetParamNames("handle")
@@ -1474,7 +1474,7 @@ func TestLookupHandler_ASN_OverflowValue(t *testing.T) {
 	e := echo.New()
 
 	// ASN max is 4294967295 (uint32 max), try one larger
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/asn/4294967296", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/asn/4294967296", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 	c.SetParamNames("asn")
@@ -1496,7 +1496,7 @@ func TestLookupHandler_ASN_OverflowValue(t *testing.T) {
 func TestLookupHandler_ASN_NegativeValue(t *testing.T) {
 	e := echo.New()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/asn/-1", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/asn/-1", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 	c.SetParamNames("asn")
@@ -1535,7 +1535,7 @@ func TestLookupHandler_BatchProcessingOrder(t *testing.T) {
 	}
 	body, _ := json.Marshal(BatchRequest{Queries: queries})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/batch", strings.NewReader(string(body)))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/batch", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
@@ -1582,7 +1582,7 @@ func TestLookupHandler_BatchStatsCalculation(t *testing.T) {
 	}
 	body, _ := json.Marshal(BatchRequest{Queries: queries})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/batch", strings.NewReader(string(body)))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/batch", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)

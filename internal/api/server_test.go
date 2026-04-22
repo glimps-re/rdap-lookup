@@ -56,7 +56,7 @@ func TestServer_HealthEndpoints(t *testing.T) {
 
 	// Test liveness endpoint
 	t.Run("liveness", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", nil)
 		rec := httptest.NewRecorder()
 
 		server.Echo().ServeHTTP(rec, req)
@@ -77,7 +77,7 @@ func TestServer_HealthEndpoints(t *testing.T) {
 
 	// Test readiness endpoint (not ready by default)
 	t.Run("readiness_not_ready", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ready", nil)
 		rec := httptest.NewRecorder()
 
 		server.Echo().ServeHTTP(rec, req)
@@ -91,7 +91,7 @@ func TestServer_HealthEndpoints(t *testing.T) {
 	t.Run("readiness_ready", func(t *testing.T) {
 		server.HealthChecker().SetReady(true)
 
-		req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ready", nil)
 		rec := httptest.NewRecorder()
 
 		server.Echo().ServeHTTP(rec, req)
@@ -114,7 +114,7 @@ func TestServer_HealthEndpoints(t *testing.T) {
 func TestServer_MetricsEndpoint(t *testing.T) {
 	server := newTestServer(t, true)
 
-	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/metrics", nil)
 	rec := httptest.NewRecorder()
 
 	server.Echo().ServeHTTP(rec, req)
@@ -188,7 +188,7 @@ func TestServer_Shutdown(t *testing.T) {
 func TestServer_MetaEndpoint(t *testing.T) {
 	server := newTestServer(t, false)
 
-	req := httptest.NewRequest(http.MethodGet, "/meta", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/meta", nil)
 	rec := httptest.NewRecorder()
 
 	server.Echo().ServeHTTP(rec, req)
@@ -228,7 +228,7 @@ func TestServer_LoggingMiddleware(t *testing.T) {
 	server := newTestServer(t, false)
 
 	// Make a request to trigger logging middleware
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", nil)
 	req.Header.Set("X-Request-ID", "test-request-id")
 	rec := httptest.NewRecorder()
 
@@ -245,13 +245,13 @@ func TestServer_MetricsMiddleware(t *testing.T) {
 	// Make several requests to trigger metrics middleware
 	paths := []string{"/healthz", "/ready", "/meta"}
 	for _, path := range paths {
-		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()
 		server.Echo().ServeHTTP(rec, req)
 	}
 
 	// Check metrics are recorded
-	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/metrics", nil)
 	rec := httptest.NewRecorder()
 	server.Echo().ServeHTTP(rec, req)
 
@@ -294,7 +294,7 @@ func TestServer_TrustProxy(t *testing.T) {
 	}
 
 	// Test with X-Forwarded-For header
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", nil)
 	req.Header.Set("X-Forwarded-For", "203.0.113.1")
 	rec := httptest.NewRecorder()
 
@@ -337,7 +337,7 @@ func TestServer_WithLookupHandler(t *testing.T) {
 	server := NewServer(cfg, logger, m, buildInfo, nil)
 
 	// Request to lookup endpoint should 404 or be handled gracefully
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/domain/example.com", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/domain/example.com", nil)
 	rec := httptest.NewRecorder()
 
 	server.Echo().ServeHTTP(rec, req)
@@ -393,7 +393,7 @@ func TestServer_WithNonNilLookupHandler(t *testing.T) {
 	}
 
 	for _, path := range paths {
-		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()
 		server.Echo().ServeHTTP(rec, req)
 
@@ -405,7 +405,7 @@ func TestServer_WithNonNilLookupHandler(t *testing.T) {
 	}
 
 	// Test batch endpoint
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/batch", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/batch", nil)
 	rec := httptest.NewRecorder()
 	server.Echo().ServeHTTP(rec, req)
 
@@ -422,7 +422,7 @@ func TestServer_RateLimitMiddlewareWithLogging_SkipsOperational(t *testing.T) {
 
 	for i := range 100 {
 		for _, path := range operationalPaths {
-			req := httptest.NewRequest(http.MethodGet, path, nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
 			rec := httptest.NewRecorder()
 			server.Echo().ServeHTTP(rec, req)
 
@@ -476,13 +476,13 @@ func TestServer_RateLimitMiddlewareWithLogging_LimitsAPI(t *testing.T) {
 	})
 
 	// First request to a non-operational endpoint should succeed
-	req1 := httptest.NewRequest(http.MethodGet, "/api/v1/domain/test.com", nil)
+	req1 := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/domain/test.com", nil)
 	req1.Header.Set("X-Real-IP", "10.0.0.1")
 	rec1 := httptest.NewRecorder()
 	server.Echo().ServeHTTP(rec1, req1)
 
 	// Second request should be rate limited (burst = 1)
-	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/domain/test.com", nil)
+	req2 := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/domain/test.com", nil)
 	req2.Header.Set("X-Real-IP", "10.0.0.1")
 	rec2 := httptest.NewRecorder()
 	server.Echo().ServeHTTP(rec2, req2)
@@ -497,7 +497,7 @@ func TestServer_RateLimitMiddlewareWithLogging_LimitsAPI(t *testing.T) {
 func TestServer_RequestWithXRequestID(t *testing.T) {
 	server := newTestServer(t, false)
 
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", nil)
 	req.Header.Set("X-Request-ID", "test-id-12345")
 	rec := httptest.NewRecorder()
 
@@ -511,7 +511,7 @@ func TestServer_RequestWithXRequestID(t *testing.T) {
 func TestServer_ErrorOnMissingPath(t *testing.T) {
 	server := newTestServer(t, false)
 
-	req := httptest.NewRequest(http.MethodGet, "/nonexistent/path", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/nonexistent/path", nil)
 	rec := httptest.NewRecorder()
 
 	server.Echo().ServeHTTP(rec, req)
