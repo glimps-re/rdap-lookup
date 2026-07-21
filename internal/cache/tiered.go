@@ -56,8 +56,25 @@ func DefaultTieredCacheConfig() TieredCacheConfig {
 	}
 }
 
+// defaultFetchTimeout is used when a config omits FetchTimeout (or sets it
+// non-positive). Without it, context.WithTimeout would produce an
+// already-expired context and every upstream fetch would fail instantly.
+const defaultFetchTimeout = 30 * time.Second
+
+// normalizeConfig enforces invariants on a TieredCacheConfig that are not
+// guaranteed when callers build the struct literal directly (bypassing
+// DefaultTieredCacheConfig). FetchTimeout must be positive.
+func normalizeConfig(cfg TieredCacheConfig) TieredCacheConfig {
+	if cfg.FetchTimeout <= 0 {
+		cfg.FetchTimeout = defaultFetchTimeout
+	}
+	return cfg
+}
+
 // NewTieredCache creates a new tiered cache using default backend implementations.
 func NewTieredCache(cfg TieredCacheConfig) (*TieredCache, error) {
+	cfg = normalizeConfig(cfg)
+
 	l1, err := NewMemoryCache(cfg.L1Config)
 	if err != nil {
 		return nil, err
@@ -86,7 +103,7 @@ func NewTieredCacheWithBackends(l1 Cache, l2 L2Cache, cfg TieredCacheConfig) *Ti
 	return &TieredCache{
 		l1:     l1,
 		l2:     l2,
-		config: cfg,
+		config: normalizeConfig(cfg),
 	}
 }
 

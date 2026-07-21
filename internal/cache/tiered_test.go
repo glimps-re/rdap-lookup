@@ -27,6 +27,50 @@ func TestNewTieredCache(t *testing.T) {
 	}
 }
 
+// TestTieredCache_OmittedFetchTimeoutDefaulted is a regression test for a bug
+// where a config literal built without FetchTimeout (as cmd/rdap-lookup does)
+// left it at 0. context.WithTimeout(ctx, 0) yields an already-expired context,
+// so every cache-miss fetch failed instantly with DeadlineExceeded, surfacing
+// as "502 UPSTREAM_ERROR: Upstream server timeout" for all uncached lookups.
+func TestTieredCache_OmittedFetchTimeoutDefaulted(t *testing.T) {
+	// Config literal that omits FetchTimeout entirely, mirroring main.go.
+	cfg := TieredCacheConfig{
+		L1Config:       DefaultMemoryCacheConfig(),
+		DefaultTTL:     24 * time.Hour,
+		NegativeTTL:    time.Hour,
+		L1PromotionTTL: 5 * time.Minute,
+		EnableL2Writes: true,
+	}
+
+	cache, err := NewTieredCache(cfg)
+	if err != nil {
+		t.Fatalf("NewTieredCache() error = %v", err)
+	}
+	t.Cleanup(func() { _ = cache.Close() })
+
+	if cache.config.FetchTimeout <= 0 {
+		t.Fatalf("FetchTimeout = %v, want positive default", cache.config.FetchTimeout)
+	}
+
+	// A fetch on a cache miss must actually run rather than seeing an
+	// already-expired context.
+	value, cached, err := cache.GetOrFetch(context.Background(), "key", func(fc context.Context) ([]byte, error) {
+		if err := fc.Err(); err != nil {
+			return nil, err
+		}
+		return []byte("ok"), nil
+	})
+	if err != nil {
+		t.Fatalf("GetOrFetch() error = %v", err)
+	}
+	if cached {
+		t.Error("first call should not be cached")
+	}
+	if string(value) != "ok" {
+		t.Errorf("value = %q, want %q", value, "ok")
+	}
+}
+
 func TestTieredCache_L1Only_SetAndGet(t *testing.T) {
 	cfg := DefaultTieredCacheConfig()
 	cache, err := NewTieredCache(cfg)
