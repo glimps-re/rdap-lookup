@@ -86,7 +86,8 @@ func TestClient_QueryDomain(t *testing.T) {
 		if resp.Handle != "DOM123" {
 			t.Errorf("Handle = %q, want %q", resp.Handle, "DOM123")
 		}
-		if !slices.Contains(resp.Status, "active") {
+		hasActive := slices.Contains(resp.Status, "active")
+		if !hasActive {
 			t.Error("expected status to contain 'active'")
 		}
 	})

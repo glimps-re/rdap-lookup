@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -18,7 +19,7 @@ func TestMetaHandler_Handle(t *testing.T) {
 	}
 	handler := NewMetaHandler(buildInfo)
 
-	req := httptest.NewRequest(http.MethodGet, "/meta", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/meta", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
@@ -65,7 +66,7 @@ func TestMetaHandler_Uptime(t *testing.T) {
 	handler := NewMetaHandler(buildInfo)
 
 	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/meta", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/meta", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
@@ -92,7 +93,7 @@ func TestBuildInfo_DefaultValues(t *testing.T) {
 	handler := NewMetaHandler(buildInfo)
 
 	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/meta", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/meta", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 

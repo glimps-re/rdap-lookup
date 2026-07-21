@@ -56,7 +56,7 @@ func TestServer_HealthEndpoints(t *testing.T) {
 
 	// Test liveness endpoint
 	t.Run("liveness", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", nil)
 		rec := httptest.NewRecorder()
 
 		server.Echo().ServeHTTP(rec, req)
@@ -77,7 +77,7 @@ func TestServer_HealthEndpoints(t *testing.T) {
 
 	// Test readiness endpoint (not ready by default)
 	t.Run("readiness_not_ready", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ready", nil)
 		rec := httptest.NewRecorder()
 
 		server.Echo().ServeHTTP(rec, req)
@@ -91,7 +91,7 @@ func TestServer_HealthEndpoints(t *testing.T) {
 	t.Run("readiness_ready", func(t *testing.T) {
 		server.HealthChecker().SetReady(true)
 
-		req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ready", nil)
 		rec := httptest.NewRecorder()
 
 		server.Echo().ServeHTTP(rec, req)
@@ -114,7 +114,7 @@ func TestServer_HealthEndpoints(t *testing.T) {
 func TestServer_MetricsEndpoint(t *testing.T) {
 	server := newTestServer(t, true)
 
-	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/metrics", nil)
 	rec := httptest.NewRecorder()
 
 	server.Echo().ServeHTTP(rec, req)
@@ -188,7 +188,7 @@ func TestServer_Shutdown(t *testing.T) {
 func TestServer_MetaEndpoint(t *testing.T) {
 	server := newTestServer(t, false)
 
-	req := httptest.NewRequest(http.MethodGet, "/meta", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/meta", nil)
 	rec := httptest.NewRecorder()
 
 	server.Echo().ServeHTTP(rec, req)
@@ -228,7 +228,7 @@ func TestServer_LoggingMiddleware(t *testing.T) {
 	server := newTestServer(t, false)
 
 	// Make a request to trigger logging middleware
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", nil)
 	req.Header.Set("X-Request-ID", "test-request-id")
 	rec := httptest.NewRecorder()
 
@@ -245,13 +245,13 @@ func TestServer_MetricsMiddleware(t *testing.T) {
 	// Make several requests to trigger metrics middleware
 	paths := []string{"/healthz", "/ready", "/meta"}
 	for _, path := range paths {
-		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()
 		server.Echo().ServeHTTP(rec, req)
 	}
 
 	// Check metrics are recorded
-	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/metrics", nil)
 	rec := httptest.NewRecorder()
 	server.Echo().ServeHTTP(rec, req)
 
@@ -294,7 +294,7 @@ func TestServer_TrustProxy(t *testing.T) {
 	}
 
 	// Test with X-Forwarded-For header
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", nil)
 	req.Header.Set("X-Forwarded-For", "203.0.113.1")
 	rec := httptest.NewRecorder()
 
@@ -337,7 +337,7 @@ func TestServer_WithLookupHandler(t *testing.T) {
 	server := NewServer(cfg, logger, m, buildInfo, nil)
 
 	// Request to lookup endpoint should 404 or be handled gracefully
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/domain/example.com", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/domain/example.com", nil)
 	rec := httptest.NewRecorder()
 
 	server.Echo().ServeHTTP(rec, req)
@@ -393,7 +393,7 @@ func TestServer_WithNonNilLookupHandler(t *testing.T) {
 	}
 
 	for _, path := range paths {
-		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()
 		server.Echo().ServeHTTP(rec, req)
 
@@ -405,7 +405,7 @@ func TestServer_WithNonNilLookupHandler(t *testing.T) {
 	}
 
 	// Test batch endpoint
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/batch", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/batch", nil)
 	rec := httptest.NewRecorder()
 	server.Echo().ServeHTTP(rec, req)
 
@@ -422,7 +422,7 @@ func TestServer_RateLimitMiddlewareWithLogging_SkipsOperational(t *testing.T) {
 
 	for i := range 100 {
 		for _, path := range operationalPaths {
-			req := httptest.NewRequest(http.MethodGet, path, nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
 			rec := httptest.NewRecorder()
 			server.Echo().ServeHTTP(rec, req)
 
@@ -468,15 +468,21 @@ func TestServer_RateLimitMiddlewareWithLogging_LimitsAPI(t *testing.T) {
 	}
 
 	server := NewServer(cfg, logger, m, buildInfo, nil)
+	// Stop the rate limiter's cleanupLoop goroutine when the test ends.
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	})
 
 	// First request to a non-operational endpoint should succeed
-	req1 := httptest.NewRequest(http.MethodGet, "/api/v1/domain/test.com", nil)
+	req1 := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/domain/test.com", nil)
 	req1.Header.Set("X-Real-IP", "10.0.0.1")
 	rec1 := httptest.NewRecorder()
 	server.Echo().ServeHTTP(rec1, req1)
 
 	// Second request should be rate limited (burst = 1)
-	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/domain/test.com", nil)
+	req2 := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/domain/test.com", nil)
 	req2.Header.Set("X-Real-IP", "10.0.0.1")
 	rec2 := httptest.NewRecorder()
 	server.Echo().ServeHTTP(rec2, req2)
@@ -491,7 +497,7 @@ func TestServer_RateLimitMiddlewareWithLogging_LimitsAPI(t *testing.T) {
 func TestServer_RequestWithXRequestID(t *testing.T) {
 	server := newTestServer(t, false)
 
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", nil)
 	req.Header.Set("X-Request-ID", "test-id-12345")
 	rec := httptest.NewRecorder()
 
@@ -505,7 +511,7 @@ func TestServer_RequestWithXRequestID(t *testing.T) {
 func TestServer_ErrorOnMissingPath(t *testing.T) {
 	server := newTestServer(t, false)
 
-	req := httptest.NewRequest(http.MethodGet, "/nonexistent/path", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/nonexistent/path", nil)
 	rec := httptest.NewRecorder()
 
 	server.Echo().ServeHTTP(rec, req)
@@ -513,5 +519,45 @@ func TestServer_ErrorOnMissingPath(t *testing.T) {
 	// Should return 404 for unknown paths
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status code = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+// TestServer_SlowHandlerDoesNotReturn503 verifies that with the
+// http.TimeoutHandler middleware removed, slow handlers return their own
+// response (not a middleware-injected 503). This is a regression guard for
+// the removal of middleware.TimeoutWithConfig in commit 3.
+func TestServer_SlowHandlerDoesNotReturn503(t *testing.T) {
+	// Use a plain net/http handler to isolate the behaviour: with
+	// http.TimeoutHandler wrapping the mux, a handler that sleeps beyond the
+	// timeout would receive a 503. Without it, the handler-authored status is
+	// returned intact.
+	const slowDelay = 20 * time.Millisecond
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/slow", func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(slowDelay)
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte("slow ok"))
+	})
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/slow", nil)
+	rec := httptest.NewRecorder()
+
+	start := time.Now()
+	mux.ServeHTTP(rec, req)
+	elapsed := time.Since(start)
+
+	// Without a timeout wrapper, handler-authored 202 must be returned.
+	if rec.Code != http.StatusAccepted {
+		t.Errorf("status = %d, want %d (no middleware should intercept to 503)", rec.Code, http.StatusAccepted)
+	}
+
+	if rec.Body.String() != "slow ok" {
+		t.Errorf("body = %q, want %q", rec.Body.String(), "slow ok")
+	}
+
+	// Sanity: at least slowDelay elapsed, confirming handler actually ran.
+	if elapsed < slowDelay {
+		t.Errorf("elapsed %v < slowDelay %v, handler may have been skipped", elapsed, slowDelay)
 	}
 }

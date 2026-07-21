@@ -79,13 +79,13 @@ func (p *DEParser) Parse(response string, domain string) (*whois.ParseResult, er
 		}
 
 		// Parse key-value pairs
-		key, value, found := strings.Cut(line, ":")
-		if !found {
+		before, after, ok := strings.Cut(line, ":")
+		if !ok {
 			continue
 		}
 
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
+		key := strings.TrimSpace(before)
+		value := strings.TrimSpace(after)
 
 		if value == "" {
 			continue

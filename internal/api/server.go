@@ -104,15 +104,6 @@ func (s *Server) setupMiddleware() {
 		s.echo.Use(s.rateLimitMiddlewareWithLogging())
 	}
 
-	// Request timeout middleware for RDAP lookups
-	s.echo.Use(middleware.TimeoutWithConfig(middleware.TimeoutConfig{
-		Skipper: func(c echo.Context) bool {
-			// Skip timeout for operational endpoints
-			return operationalEndpoints[c.Request().URL.Path]
-		},
-		Timeout: s.cfg.Server.WriteTimeout,
-	}))
-
 	// Custom logging middleware using slog
 	s.echo.Use(s.loggingMiddleware())
 

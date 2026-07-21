@@ -183,7 +183,13 @@ func buildAddress(vcard *openrdap.VCard) string {
 		return ""
 	}
 
-	return strings.Join(parts, ", ")
+	result := parts[0]
+	var resultSb186 strings.Builder
+	for i := 1; i < len(parts); i++ {
+		resultSb186.WriteString(", " + parts[i])
+	}
+	result += resultSb186.String()
+	return result
 }
 
 // getVCardFirstValue retrieves the first value for a vCard property by name.

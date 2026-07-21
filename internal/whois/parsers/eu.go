@@ -110,8 +110,8 @@ func (p *EUParser) Parse(response string, domain string) (*whois.ParseResult, er
 		}
 
 		// Parse key-value pairs
-		key, value, found := strings.Cut(trimmedLine, ":")
-		if !found {
+		before, after, ok := strings.Cut(trimmedLine, ":")
+		if !ok {
 			// No colon - could be a nameserver or DNSSEC value
 			switch currentSection {
 			case "name servers", "nameservers":
@@ -126,8 +126,8 @@ func (p *EUParser) Parse(response string, domain string) (*whois.ParseResult, er
 			continue
 		}
 
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
+		key := strings.TrimSpace(before)
+		value := strings.TrimSpace(after)
 
 		if value == "" || strings.Contains(strings.ToLower(value), "not disclosed") {
 			continue

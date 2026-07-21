@@ -89,7 +89,8 @@ func newFieldExtractor(patterns ...string) *fieldExtractor {
 // Extract extracts the value for this field from the WHOIS response.
 // Returns empty string if not found.
 func (f *fieldExtractor) Extract(response string) string {
-	for line := range strings.SplitSeq(response, "\n") {
+	lines := strings.SplitSeq(response, "\n")
+	for line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "%") || strings.HasPrefix(line, "#") {
 			continue
@@ -119,7 +120,8 @@ func (f *fieldExtractor) ExtractAll(response string) []string {
 	var values []string
 	seen := make(map[string]bool)
 
-	for line := range strings.SplitSeq(response, "\n") {
+	lines := strings.SplitSeq(response, "\n")
+	for line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "%") || strings.HasPrefix(line, "#") {
 			continue

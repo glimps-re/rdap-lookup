@@ -41,6 +41,11 @@ type LookupHandler struct {
 	batchConfig     config.BatchConfig
 	metrics         *metrics.Metrics
 
+	// handlerTimeout is derived from Server.WriteTimeout and applied to every
+	// lookup handler so that upstream I/O (RDAP, WHOIS) is cancelled before
+	// the HTTP connection deadline elapses.
+	handlerTimeout time.Duration
+
 	// WHOIS fallback support
 	whoisClient   *whois.Client
 	whoisRegistry *whois.ParserRegistry
@@ -48,7 +53,13 @@ type LookupHandler struct {
 }
 
 // NewLookupHandler creates a new lookup handler.
-func NewLookupHandler(client *rdap.Client, bs *bootstrap.Service, c *cache.TieredCache, batchCfg config.BatchConfig, m *metrics.Metrics) *LookupHandler {
+func NewLookupHandler(client *rdap.Client, bs *bootstrap.Service, c *cache.TieredCache, batchCfg config.BatchConfig, handlerTimeout time.Duration, m *metrics.Metrics) *LookupHandler {
+	// Guard against zero/negative timeouts; fall back to a safe default that
+	// matches the default Server.WriteTimeout so upstream I/O is always bounded.
+	if handlerTimeout <= 0 {
+		handlerTimeout = 30 * time.Second
+	}
+
 	// Initialize the server validator with bootstrap servers
 	var servers []string
 	if resolver := bs.Resolver(); resolver != nil {
@@ -61,6 +72,7 @@ func NewLookupHandler(client *rdap.Client, bs *bootstrap.Service, c *cache.Tiere
 		cache:           c,
 		serverValidator: validate.NewRDAPServerValidator(servers),
 		batchConfig:     batchCfg,
+		handlerTimeout:  handlerTimeout,
 		metrics:         m,
 		whoisEnabled:    false, // Disabled by default
 	}
@@ -68,9 +80,9 @@ func NewLookupHandler(client *rdap.Client, bs *bootstrap.Service, c *cache.Tiere
 
 // NewLookupHandlerWithWHOIS creates a new lookup handler with WHOIS fallback support.
 func NewLookupHandlerWithWHOIS(client *rdap.Client, bs *bootstrap.Service, c *cache.TieredCache,
-	batchCfg config.BatchConfig, whoisCfg config.WHOISConfig, m *metrics.Metrics,
+	batchCfg config.BatchConfig, handlerTimeout time.Duration, whoisCfg config.WHOISConfig, m *metrics.Metrics,
 ) *LookupHandler {
-	h := NewLookupHandler(client, bs, c, batchCfg, m)
+	h := NewLookupHandler(client, bs, c, batchCfg, handlerTimeout, m)
 
 	if whoisCfg.Enabled {
 		h.whoisEnabled = true
@@ -82,6 +94,15 @@ func NewLookupHandlerWithWHOIS(client *rdap.Client, bs *bootstrap.Service, c *ca
 	}
 
 	return h
+}
+
+// deriveCtx returns a context bounded by h.handlerTimeout, derived from the
+// inbound request context. The caller must defer the returned cancel function.
+// Using Server.WriteTimeout as the handler deadline ensures upstream I/O
+// (RDAP, WHOIS) is cancelled before the HTTP connection deadline elapses,
+// preventing goroutine leaks that can cause concurrent map-write panics.
+func (h *LookupHandler) deriveCtx(c echo.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(c.Request().Context(), h.handlerTimeout)
 }
 
 // recordLookupMetrics records metrics for a lookup operation.
@@ -155,12 +176,13 @@ func (h *LookupHandler) LookupDomain(c echo.Context) error {
 		})
 	}
 
-	ctx := c.Request().Context()
+	ctx, cancel := h.deriveCtx(c)
+	defer cancel()
 	cacheKey := cache.BuildKey(cache.KeyPrefixDomain, name)
 
 	// Try to get from cache or fetch
-	data, cached, err := h.cache.GetOrFetchWithNegative(ctx, cacheKey, func() ([]byte, error) {
-		return h.fetchDomainData(ctx, name)
+	data, cached, err := h.cache.GetOrFetchWithNegative(ctx, cacheKey, func(fc context.Context) ([]byte, error) {
+		return h.fetchDomainData(fc, name)
 	}, rdap.ErrNotFound)
 
 	h.recordLookupMetrics("domain", err, cached)
@@ -266,14 +288,15 @@ func (h *LookupHandler) LookupIP(c echo.Context) error {
 		})
 	}
 
-	ctx := c.Request().Context()
+	ctx, cancel := h.deriveCtx(c)
+	defer cancel()
 	cacheKey := cache.BuildKey(cache.KeyPrefixIP, addr)
 
-	data, cached, err := h.cache.GetOrFetchWithNegative(ctx, cacheKey, func() ([]byte, error) {
+	data, cached, err := h.cache.GetOrFetchWithNegative(ctx, cacheKey, func(fc context.Context) ([]byte, error) {
 		// Update resolver before query
 		h.client.SetResolver(h.bootstrap.Resolver())
 
-		resp, err := h.client.QueryIP(ctx, addr)
+		resp, err := h.client.QueryIP(fc, addr)
 		if err != nil {
 			return nil, err
 		}
@@ -326,14 +349,15 @@ func (h *LookupHandler) LookupASN(c echo.Context) error {
 	}
 	asn := uint32(asn64)
 
-	ctx := c.Request().Context()
+	ctx, cancel := h.deriveCtx(c)
+	defer cancel()
 	cacheKey := cache.BuildKey(cache.KeyPrefixASN, asnStr)
 
-	data, cached, fetchErr := h.cache.GetOrFetchWithNegative(ctx, cacheKey, func() ([]byte, error) {
+	data, cached, fetchErr := h.cache.GetOrFetchWithNegative(ctx, cacheKey, func(fc context.Context) ([]byte, error) {
 		// Update resolver before query
 		h.client.SetResolver(h.bootstrap.Resolver())
 
-		resp, err := h.client.QueryASN(ctx, asn)
+		resp, err := h.client.QueryASN(fc, asn)
 		if err != nil {
 			return nil, err
 		}
@@ -392,12 +416,13 @@ func (h *LookupHandler) LookupEntity(c echo.Context) error {
 		})
 	}
 
-	ctx := c.Request().Context()
+	ctx, cancel := h.deriveCtx(c)
+	defer cancel()
 	// Include server URL in cache key to prevent cache poisoning
 	cacheKey := cache.BuildKey(cache.KeyPrefixEntity, serverURL+":"+handle)
 
-	data, cached, err := h.cache.GetOrFetchWithNegative(ctx, cacheKey, func() ([]byte, error) {
-		resp, err := h.client.QueryEntity(ctx, handle, serverURL)
+	data, cached, err := h.cache.GetOrFetchWithNegative(ctx, cacheKey, func(fc context.Context) ([]byte, error) {
+		resp, err := h.client.QueryEntity(fc, handle, serverURL)
 		if err != nil {
 			return nil, err
 		}
@@ -483,8 +508,15 @@ func (h *LookupHandler) LookupBatch(c echo.Context) error {
 
 	start := time.Now()
 
-	// Create a batch-specific context with timeout
-	batchCtx, cancel := context.WithTimeout(c.Request().Context(), h.batchConfig.Timeout)
+	// Derive a handler-scoped context bounded by Server.WriteTimeout so that
+	// upstream I/O is cancelled if the overall deadline elapses.
+	handlerCtx, handlerCancel := h.deriveCtx(c)
+	defer handlerCancel()
+
+	// Create a batch-specific context with timeout; the smaller of the two
+	// deadlines (handlerTimeout vs batchConfig.Timeout) wins automatically
+	// via context composition.
+	batchCtx, cancel := context.WithTimeout(handlerCtx, h.batchConfig.Timeout)
 	defer cancel()
 
 	results := make([]BatchResult, len(req.Queries))
@@ -619,8 +651,8 @@ func (h *LookupHandler) lookupDomainData(ctx context.Context, name string) ([]by
 	name = strings.ToLower(strings.TrimSpace(name))
 	cacheKey := cache.BuildKey(cache.KeyPrefixDomain, name)
 
-	return h.cache.GetOrFetchWithNegative(ctx, cacheKey, func() ([]byte, error) {
-		return h.fetchDomainData(ctx, name)
+	return h.cache.GetOrFetchWithNegative(ctx, cacheKey, func(fc context.Context) ([]byte, error) {
+		return h.fetchDomainData(fc, name)
 	}, rdap.ErrNotFound)
 }
 
@@ -628,10 +660,10 @@ func (h *LookupHandler) lookupIPData(ctx context.Context, addr string) ([]byte, 
 	addr = strings.TrimSpace(addr)
 	cacheKey := cache.BuildKey(cache.KeyPrefixIP, addr)
 
-	return h.cache.GetOrFetchWithNegative(ctx, cacheKey, func() ([]byte, error) {
+	return h.cache.GetOrFetchWithNegative(ctx, cacheKey, func(fc context.Context) ([]byte, error) {
 		h.client.SetResolver(h.bootstrap.Resolver())
 
-		resp, err := h.client.QueryIP(ctx, addr)
+		resp, err := h.client.QueryIP(fc, addr)
 		if err != nil {
 			return nil, err
 		}
@@ -652,7 +684,7 @@ func (h *LookupHandler) lookupASNData(ctx context.Context, asnStr string) ([]byt
 	asnStr = strings.TrimPrefix(strings.ToUpper(strings.TrimSpace(asnStr)), "AS")
 	cacheKey := cache.BuildKey(cache.KeyPrefixASN, asnStr)
 
-	return h.cache.GetOrFetchWithNegative(ctx, cacheKey, func() ([]byte, error) {
+	return h.cache.GetOrFetchWithNegative(ctx, cacheKey, func(fc context.Context) ([]byte, error) {
 		asn64, err := strconv.ParseUint(asnStr, 10, 32)
 		if err != nil {
 			return nil, bootstrap.ErrInvalidInput
@@ -661,7 +693,7 @@ func (h *LookupHandler) lookupASNData(ctx context.Context, asnStr string) ([]byt
 
 		h.client.SetResolver(h.bootstrap.Resolver())
 
-		resp, err := h.client.QueryASN(ctx, asn)
+		resp, err := h.client.QueryASN(fc, asn)
 		if err != nil {
 			return nil, err
 		}
@@ -683,8 +715,8 @@ func (h *LookupHandler) lookupEntityData(ctx context.Context, handle, serverURL 
 	// Include server URL in cache key to prevent cache poisoning
 	cacheKey := cache.BuildKey(cache.KeyPrefixEntity, serverURL+":"+handle)
 
-	return h.cache.GetOrFetchWithNegative(ctx, cacheKey, func() ([]byte, error) {
-		resp, err := h.client.QueryEntity(ctx, handle, serverURL)
+	return h.cache.GetOrFetchWithNegative(ctx, cacheKey, func(fc context.Context) ([]byte, error) {
+		resp, err := h.client.QueryEntity(fc, handle, serverURL)
 		if err != nil {
 			return nil, err
 		}
