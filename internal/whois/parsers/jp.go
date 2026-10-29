@@ -69,6 +69,7 @@ func (p *JPParser) Parse(response string, domain string) (*whois.ParseResult, er
 		strings.Contains(responseLower, "no entries found") {
 		result.Confidence = whois.ConfidenceLow
 		result.Errors = append(result.Errors, "domain not found")
+		result.NotFound = true
 		pd.DomainName = strings.ToLower(domain)
 		return result, nil
 	}

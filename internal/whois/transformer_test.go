@@ -15,6 +15,14 @@ func TestTransformToSimpleDomain_Nil(t *testing.T) {
 	if result != nil {
 		t.Error("TransformToSimpleDomain with nil Domain should return nil")
 	}
+
+	result = TransformToSimpleDomain(&ParseResult{
+		Domain:   &ParsedDomain{DomainName: "free.de"},
+		NotFound: true,
+	})
+	if result != nil {
+		t.Error("TransformToSimpleDomain with NotFound should return nil")
+	}
 }
 
 func TestTransformToSimpleDomain_Basic(t *testing.T) {

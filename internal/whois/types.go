@@ -91,6 +91,8 @@ type ParseResult struct {
 	ParserName string
 	// Errors contains any non-fatal parsing errors encountered.
 	Errors []string
+	// NotFound reports that the registry answered the domain is not registered.
+	NotFound bool
 }
 
 // QueryResult contains the result of a WHOIS query.

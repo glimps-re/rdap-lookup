@@ -118,6 +118,9 @@ func TestESParser_Parse_NotFound(t *testing.T) {
 			if result.Confidence != "low" {
 				t.Errorf("Confidence = %q, want low", result.Confidence)
 			}
+			if !result.NotFound {
+				t.Error("NotFound = false, want true")
+			}
 		})
 	}
 }
