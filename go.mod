@@ -4,6 +4,7 @@ go 1.24.11
 
 require (
 	github.com/alicebob/miniredis/v2 v2.35.0
+	github.com/google/go-cmp v0.7.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/labstack/echo-contrib v0.17.4
 	github.com/labstack/echo/v4 v4.14.0

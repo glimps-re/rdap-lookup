@@ -40,30 +40,40 @@ func TestAPIError_Error(t *testing.T) {
 }
 
 func TestAPIError_IsNotFound(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		err  *APIError
 		want bool
 	}{
 		{
-			name: "404 status code",
+			name: "404 without code",
 			err:  &APIError{StatusCode: 404},
-			want: true,
 		},
 		{
 			name: "NOT_FOUND code",
-			err:  &APIError{StatusCode: 200, Code: "NOT_FOUND"},
+			err: &APIError{
+				StatusCode: 404,
+				Code:       "NOT_FOUND",
+			},
 			want: true,
+		},
+		{
+			name: "NO_SOURCE code",
+			err: &APIError{
+				StatusCode: 404,
+				Code:       "NO_SOURCE",
+			},
 		},
 		{
 			name: "not a 404",
 			err:  &APIError{StatusCode: 500},
-			want: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := tt.err.IsNotFound(); got != tt.want {
 				t.Errorf("IsNotFound() = %v, want %v", got, tt.want)
 			}
@@ -136,6 +146,7 @@ func TestAPIError_IsServerError(t *testing.T) {
 }
 
 func TestIsNotFoundError(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		err  error
@@ -143,8 +154,22 @@ func TestIsNotFoundError(t *testing.T) {
 	}{
 		{
 			name: "APIError not found",
-			err:  &APIError{StatusCode: 404, Code: "NOT_FOUND"},
+			err: &APIError{
+				StatusCode: 404,
+				Code:       "NOT_FOUND",
+			},
 			want: true,
+		},
+		{
+			name: "APIError no source",
+			err: &APIError{
+				StatusCode: 404,
+				Code:       "NO_SOURCE",
+			},
+		},
+		{
+			name: "APIError 404 without code",
+			err:  &APIError{StatusCode: 404},
 		},
 		{
 			name: "ErrNotFound sentinel",
@@ -154,17 +179,16 @@ func TestIsNotFoundError(t *testing.T) {
 		{
 			name: "wrapped ErrNotFound",
 			err:  errors.New("wrapped: " + ErrNotFound.Error()),
-			want: false,
 		},
 		{
 			name: "other error",
 			err:  errors.New("something else"),
-			want: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := IsNotFoundError(tt.err); got != tt.want {
 				t.Errorf("IsNotFoundError() = %v, want %v", got, tt.want)
 			}

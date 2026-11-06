@@ -9,6 +9,7 @@ import (
 // Common error codes returned by the API.
 const (
 	ErrCodeNotFound       = "NOT_FOUND"
+	ErrCodeNoSource       = "NO_SOURCE"
 	ErrCodeInvalidRequest = "INVALID_REQUEST"
 	ErrCodeUpstreamError  = "UPSTREAM_ERROR"
 	ErrCodeRateLimited    = "RATE_LIMITED"
@@ -45,9 +46,9 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("API error %d: %s", e.StatusCode, e.Message)
 }
 
-// IsNotFound returns true if the error indicates a not found response.
+// IsNotFound reports a registry's not-found answer; a NO_SOURCE or code-less 404 is not one.
 func (e *APIError) IsNotFound() bool {
-	return e.StatusCode == http.StatusNotFound || e.Code == ErrCodeNotFound
+	return e.Code == ErrCodeNotFound
 }
 
 // IsRateLimited returns true if the error indicates rate limiting.

@@ -128,7 +128,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '404':
-          description: Domain not found
+          description: |
+            `NOT_FOUND`: the registry answered the domain is not registered.
+            `NO_SOURCE`: no RDAP or WHOIS server could be asked, so nothing is known.
           content:
             application/json:
               schema:
@@ -140,7 +142,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '502':
-          description: Upstream RDAP server error
+          description: Upstream RDAP or WHOIS server error, or a WHOIS answer holding no registration data
           content:
             application/json:
               schema:
@@ -183,7 +185,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '404':
-          description: IP network not found
+          description: |
+            `NOT_FOUND`: IP network not found in the registry.
+            `NO_SOURCE`: no RDAP server could be asked, so nothing is known.
           content:
             application/json:
               schema:
@@ -231,7 +235,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '404':
-          description: ASN not found
+          description: |
+            `NOT_FOUND`: ASN not found in the registry.
+            `NO_SOURCE`: no RDAP server could be asked, so nothing is known.
           content:
             application/json:
               schema:
@@ -283,7 +289,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '404':
-          description: Entity not found
+          description: |
+            `NOT_FOUND`: Entity not found in the registry.
+            `NO_SOURCE`: no RDAP server could be asked, so nothing is known.
           content:
             application/json:
               schema:
@@ -391,6 +399,20 @@ components:
           type: string
           description: RDAP server URL that provided this data
           example: https://rdap.verisign.com/com/v1
+        data_source:
+          type: string
+          enum: [rdap, whois]
+          description: Data source for this response
+          example: rdap
+        whois_server:
+          type: string
+          description: WHOIS server hostname (only present for WHOIS responses)
+          example: whois.denic.de
+        confidence:
+          type: string
+          enum: [high, low]
+          description: Confidence level of the parsed data (only present for WHOIS responses)
+          example: high
 
     SimpleEntity:
       type: object
@@ -645,6 +667,7 @@ components:
           enum:
             - INVALID_REQUEST
             - NOT_FOUND
+            - NO_SOURCE
             - RATE_LIMITED
             - INVALID_SERVER
             - UPSTREAM_ERROR

@@ -2,9 +2,23 @@ package whois
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
+
+// notFoundPhrases must start a line: legal text in a registered domain's answer may contain them.
+var notFoundPhrases = []string{
+	"not found",
+	"domain not found",
+	"object not found",
+	"no match",
+	"no entries found",
+	"no data found",
+	"no object found",
+	"status: free",
+	"status: available",
+}
 
 // GenericParser is a best-effort WHOIS parser for unknown TLDs.
 // It extracts common fields using heuristics and pattern matching.
@@ -198,7 +212,21 @@ func (p *GenericParser) Parse(response string, domain string) (*ParseResult, err
 	// Store raw response
 	pd.RawResponse = response
 
+	result.MarkNotFound(hasNotFoundLine(response), "domain not found")
+
 	return result, nil
+}
+
+func hasNotFoundLine(response string) bool {
+	for line := range strings.SplitSeq(strings.ToLower(response), "\n") {
+		line = strings.TrimLeft(strings.TrimSpace(line), "%#> ")
+		if slices.ContainsFunc(notFoundPhrases, func(phrase string) bool {
+			return strings.HasPrefix(line, phrase)
+		}) {
+			return true
+		}
+	}
+	return false
 }
 
 // parseDate attempts to parse a date string in various formats.

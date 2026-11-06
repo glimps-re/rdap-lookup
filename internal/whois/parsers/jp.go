@@ -62,17 +62,10 @@ func (p *JPParser) Parse(response string, domain string) (*whois.ParseResult, er
 	pd := result.Domain
 	pd.RawResponse = response
 
-	// Check for "No match" or similar
 	responseLower := strings.ToLower(response)
-	if strings.Contains(responseLower, "no match") ||
+	notFound := strings.Contains(responseLower, "no match") ||
 		strings.Contains(responseLower, "not found") ||
-		strings.Contains(responseLower, "no entries found") {
-		result.Confidence = whois.ConfidenceLow
-		result.Errors = append(result.Errors, "domain not found")
-		result.NotFound = true
-		pd.DomainName = strings.ToLower(domain)
-		return result, nil
-	}
+		strings.Contains(responseLower, "no entries found")
 
 	// Parse the response line by line
 	lines := strings.SplitSeq(response, "\n")
@@ -95,6 +88,8 @@ func (p *JPParser) Parse(response string, domain string) (*whois.ParseResult, er
 	if pd.DomainName == "" {
 		pd.DomainName = strings.ToLower(domain)
 	}
+
+	result.MarkNotFound(notFound, "domain not found")
 
 	return result, nil
 }

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/glimps-re/rdap-lookup/internal/bootstrap"
 	"github.com/glimps-re/rdap-lookup/internal/cache"
@@ -19,6 +20,7 @@ import (
 	"github.com/glimps-re/rdap-lookup/internal/metrics"
 	"github.com/glimps-re/rdap-lookup/internal/rdap"
 	"github.com/glimps-re/rdap-lookup/internal/validate"
+	"github.com/glimps-re/rdap-lookup/internal/whois"
 )
 
 func TestLookupHandler_ErrorResponse(t *testing.T) {
@@ -408,7 +410,15 @@ func TestSanitizeBatchError(t *testing.T) {
 		{
 			name:     "bootstrap not found",
 			err:      bootstrap.ErrNotFound,
-			expected: "no RDAP server found",
+			expected: "no registry source found",
+		},
+		{
+			name: "no WHOIS server",
+			err: &whois.WHOISError{
+				Op:  "discover",
+				Err: whois.ErrNoWHOISServer,
+			},
+			expected: "no registry source found",
 		},
 		{
 			name:     "invalid input",
@@ -443,53 +453,118 @@ func TestSanitizeBatchError(t *testing.T) {
 }
 
 func TestSanitizeUpstreamError(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
-		name     string
-		err      error
-		expected string
+		name string
+		err  error
+		want string
 	}{
 		{
-			name:     "timeout error",
-			err:      context.DeadlineExceeded,
-			expected: "Upstream server timeout",
+			name: "timeout error",
+			err:  context.DeadlineExceeded,
+			want: "Upstream server timeout",
 		},
 		{
-			name:     "rate limited error",
-			err:      rdap.ErrRateLimited,
-			expected: "Upstream server rate limited",
+			name: "rate limited error",
+			err:  rdap.ErrRateLimited,
+			want: "Upstream server rate limited",
 		},
 		{
-			name:     "server error",
-			err:      rdap.ErrServerError,
-			expected: "Upstream server error",
+			name: "server error",
+			err:  rdap.ErrServerError,
+			want: "Upstream server error",
 		},
 		{
-			name:     "generic error",
-			err:      errors.New("connection refused"),
-			expected: "Failed to query upstream RDAP server",
+			name: "WHOIS answer without data",
+			err:  whois.ErrNoRegistrationData,
+			want: "Upstream WHOIS answer holds no registration data",
+		},
+		{
+			name: "generic error",
+			err:  errors.New("connection refused"),
+			want: "Failed to query upstream RDAP server",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := sanitizeUpstreamError(tt.err)
-			if result != tt.expected {
-				t.Errorf("sanitizeUpstreamError(%v) = %q, want %q", tt.err, result, tt.expected)
+			t.Parallel()
+			if got := sanitizeUpstreamError(tt.err); got != tt.want {
+				t.Errorf("sanitizeUpstreamError(%v) = %q, want %q", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLookupHandler_RecordLookupMetrics(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		err         error
+		wantOutcome string
+	}{
+		{
+			name:        "success",
+			wantOutcome: OutcomeSuccess,
+		},
+		{
+			name:        "registry not found",
+			err:         rdap.ErrNotFound,
+			wantOutcome: OutcomeNotFound,
+		},
+		{
+			name:        "no RDAP server",
+			err:         bootstrap.ErrNotFound,
+			wantOutcome: OutcomeNoSource,
+		},
+		{
+			name: "no WHOIS server",
+			err: &whois.WHOISError{
+				Op:  "discover",
+				Err: whois.ErrNoWHOISServer,
+			},
+			wantOutcome: OutcomeNoSource,
+		},
+		{
+			name:        "rate limited",
+			err:         rdap.ErrRateLimited,
+			wantOutcome: OutcomeRateLimited,
+		},
+		{
+			name:        "timeout",
+			err:         context.DeadlineExceeded,
+			wantOutcome: OutcomeTimeout,
+		},
+		{
+			name:        "upstream error",
+			err:         errors.New("connection refused"),
+			wantOutcome: OutcomeError,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			m := metrics.New()
+			h := &LookupHandler{metrics: m}
+
+			h.recordLookupMetrics("domain", tc.err, false)
+
+			if got := testutil.ToFloat64(m.LookupOutcomes.WithLabelValues("domain", tc.wantOutcome)); got != 1 {
+				t.Errorf("outcome %q count = %v, want 1", tc.wantOutcome, got)
 			}
 		})
 	}
 }
 
 func TestLookupHandler_HandleError(t *testing.T) {
-	e := echo.New()
-	handler := &LookupHandler{}
-
+	t.Parallel()
 	tests := []struct {
-		name       string
-		err        error
-		queryType  string
-		wantStatus int
-		wantCode   string
+		name        string
+		err         error
+		queryType   string
+		wantStatus  int
+		wantCode    string
+		wantMessage string
 	}{
 		{
 			name:       "not found",
@@ -517,7 +592,25 @@ func TestLookupHandler_HandleError(t *testing.T) {
 			err:        bootstrap.ErrNotFound,
 			queryType:  "domain",
 			wantStatus: http.StatusNotFound,
-			wantCode:   "NOT_FOUND",
+			wantCode:   "NO_SOURCE",
+		},
+		{
+			name: "no WHOIS server",
+			err: &whois.WHOISError{
+				Op:  "discover",
+				Err: whois.ErrNoWHOISServer,
+			},
+			queryType:  "domain",
+			wantStatus: http.StatusNotFound,
+			wantCode:   "NO_SOURCE",
+		},
+		{
+			name:        "WHOIS response without data",
+			err:         whois.ErrNoRegistrationData,
+			queryType:   "domain",
+			wantStatus:  http.StatusBadGateway,
+			wantCode:    "UPSTREAM_ERROR",
+			wantMessage: "Upstream WHOIS answer holds no registration data",
 		},
 		{
 			name:       "generic upstream error",
@@ -526,30 +619,49 @@ func TestLookupHandler_HandleError(t *testing.T) {
 			wantStatus: http.StatusBadGateway,
 			wantCode:   "UPSTREAM_ERROR",
 		},
+		{
+			name:       "upstream server error",
+			err:        rdap.ErrServerError,
+			queryType:  "domain",
+			wantStatus: http.StatusBadGateway,
+			wantCode:   "UPSTREAM_ERROR",
+		},
+		{
+			name:        "timeout falls through to upstream error with a timeout message",
+			err:         context.DeadlineExceeded,
+			queryType:   "ip",
+			wantStatus:  http.StatusBadGateway,
+			wantCode:    "UPSTREAM_ERROR",
+			wantMessage: "Upstream server timeout",
+		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := echo.New()
+			handler := &LookupHandler{}
 			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
 			rec := httptest.NewRecorder()
 			c := e.NewContext(req, rec)
 
-			err := handler.handleError(c, tt.err, tt.queryType, "test-value")
-			if err != nil {
+			if err := handler.handleError(c, tc.err, tc.queryType, "test-value"); err != nil {
 				t.Fatalf("handleError returned error: %v", err)
 			}
 
-			if rec.Code != tt.wantStatus {
-				t.Errorf("status = %d, want %d", rec.Code, tt.wantStatus)
+			if rec.Code != tc.wantStatus {
+				t.Errorf("status = %d, want %d", rec.Code, tc.wantStatus)
 			}
 
 			var errResp ErrorResponse
 			if err := json.Unmarshal(rec.Body.Bytes(), &errResp); err != nil {
 				t.Fatalf("unmarshal error: %v", err)
 			}
-
-			if errResp.Error.Code != tt.wantCode {
-				t.Errorf("Error.Code = %q, want %q", errResp.Error.Code, tt.wantCode)
+			if errResp.Error.Code != tc.wantCode {
+				t.Errorf("Error.Code = %q, want %q", errResp.Error.Code, tc.wantCode)
+			}
+			if tc.wantMessage != "" && errResp.Error.Message != tc.wantMessage {
+				t.Errorf("Error.Message = %q, want %q", errResp.Error.Message, tc.wantMessage)
 			}
 		})
 	}
@@ -1342,66 +1454,6 @@ func TestLookupHandler_ProcessBatchQuery_EntityTypeCases(t *testing.T) {
 	}
 }
 
-func TestLookupHandler_HandleError_ServerError(t *testing.T) {
-	e := echo.New()
-	handler := &LookupHandler{}
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-
-	err := handler.handleError(c, rdap.ErrServerError, "domain", "example.com")
-	if err != nil {
-		t.Fatalf("handleError returned error: %v", err)
-	}
-
-	if rec.Code != http.StatusBadGateway {
-		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadGateway)
-	}
-
-	var errResp ErrorResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &errResp); err != nil {
-		t.Fatalf("unmarshal error: %v", err)
-	}
-
-	if errResp.Error.Code != "UPSTREAM_ERROR" {
-		t.Errorf("Error.Code = %q, want %q", errResp.Error.Code, "UPSTREAM_ERROR")
-	}
-}
-
-func TestLookupHandler_HandleError_Timeout(t *testing.T) {
-	e := echo.New()
-	handler := &LookupHandler{}
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-
-	err := handler.handleError(c, context.DeadlineExceeded, "ip", "8.8.8.8")
-	if err != nil {
-		t.Fatalf("handleError returned error: %v", err)
-	}
-
-	// Timeout errors fall through to generic upstream error handling
-	if rec.Code != http.StatusBadGateway {
-		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadGateway)
-	}
-
-	var errResp ErrorResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &errResp); err != nil {
-		t.Fatalf("unmarshal error: %v", err)
-	}
-
-	// Error code is UPSTREAM_ERROR, but message contains timeout info
-	if errResp.Error.Code != "UPSTREAM_ERROR" {
-		t.Errorf("Error.Code = %q, want %q", errResp.Error.Code, "UPSTREAM_ERROR")
-	}
-
-	if !strings.Contains(errResp.Error.Message, "timeout") {
-		t.Errorf("Error.Message = %q, should contain 'timeout'", errResp.Error.Message)
-	}
-}
-
 func TestLookupHandler_Entity_InvalidServerURLFormat(t *testing.T) {
 	e := echo.New()
 
@@ -2065,5 +2117,159 @@ func TestLookupBatch_BatchTimeoutDominatesWhenSmaller(t *testing.T) {
 	// provides a tighter deadline when batch timeout is shorter.
 	if elapsed > handlerTimeout/2 {
 		t.Errorf("LookupBatch took %v, want < %v (batch timeout dominates)", elapsed, handlerTimeout/2)
+	}
+}
+
+type whoisQuerierMock struct {
+	QueryMock func(ctx context.Context, domain string) (*whois.QueryResult, error)
+	CloseMock func() error
+}
+
+func (m *whoisQuerierMock) Query(ctx context.Context, domain string) (*whois.QueryResult, error) {
+	if m.QueryMock != nil {
+		return m.QueryMock(ctx, domain)
+	}
+	panic("Query() not implemented in current test")
+}
+
+func (m *whoisQuerierMock) Close() error {
+	if m.CloseMock != nil {
+		return m.CloseMock()
+	}
+	panic("Close() not implemented in current test")
+}
+
+type whoisParserMock struct {
+	ParseMock       func(response, domain string) (*whois.ParseResult, error)
+	NameMock        func() string
+	SupportsTLDMock func(tld string) bool
+}
+
+func (m *whoisParserMock) Parse(response, domain string) (*whois.ParseResult, error) {
+	if m.ParseMock != nil {
+		return m.ParseMock(response, domain)
+	}
+	panic("Parse() not implemented in current test")
+}
+
+func (m *whoisParserMock) Name() string {
+	if m.NameMock != nil {
+		return m.NameMock()
+	}
+	panic("Name() not implemented in current test")
+}
+
+func (m *whoisParserMock) SupportsTLD(tld string) bool {
+	if m.SupportsTLDMock != nil {
+		return m.SupportsTLDMock(tld)
+	}
+	panic("SupportsTLD() not implemented in current test")
+}
+
+func TestLookupHandler_DomainViaWHOIS(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		queryErr     error
+		parseResult  *whois.ParseResult
+		wantStatus   int
+		wantCode     string
+		wantCached   bool
+		wantUpstream int
+	}{
+		{
+			name: "registry reports the domain unregistered",
+			parseResult: &whois.ParseResult{
+				Domain:   &whois.ParsedDomain{DomainName: "example.zz"},
+				NotFound: true,
+			},
+			wantStatus:   http.StatusNotFound,
+			wantCode:     "NOT_FOUND",
+			wantCached:   true,
+			wantUpstream: 1,
+		},
+		{
+			name: "answer holds no registration data",
+			parseResult: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{DomainName: "example.zz"},
+			},
+			wantStatus:   http.StatusBadGateway,
+			wantCode:     "UPSTREAM_ERROR",
+			wantUpstream: 2,
+		},
+		{
+			name: "no WHOIS server for the TLD",
+			queryErr: &whois.WHOISError{
+				Op:  "discover",
+				Err: whois.ErrNoWHOISServer,
+			},
+			wantStatus:   http.StatusNotFound,
+			wantCode:     "NO_SOURCE",
+			wantUpstream: 2,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			const domain = "example.zz"
+
+			upstreamCalls := 0
+			parser := &whoisParserMock{
+				ParseMock: func(string, string) (*whois.ParseResult, error) {
+					return tt.parseResult, nil
+				},
+			}
+			registry := whois.NewParserRegistry()
+			registry.Register(parser, "zz")
+			tc, err := cache.NewTieredCache(cache.DefaultTieredCacheConfig())
+			if err != nil {
+				t.Fatalf("NewTieredCache error: %v", err)
+			}
+			h := &LookupHandler{
+				cache: tc,
+				whoisClient: &whoisQuerierMock{
+					QueryMock: func(context.Context, string) (*whois.QueryResult, error) {
+						upstreamCalls++
+						if tt.queryErr != nil {
+							return nil, tt.queryErr
+						}
+						return &whois.QueryResult{Server: "whois.nic.zz"}, nil
+					},
+				},
+				whoisRegistry: registry,
+				whoisEnabled:  true,
+			}
+
+			lookup := func() (int, string, bool) {
+				rec := httptest.NewRecorder()
+				c := echo.New().NewContext(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil), rec)
+				_, cached, err := h.cache.GetOrFetchWithNegative(t.Context(), cache.BuildKey(cache.KeyPrefixDomain, domain), func(fc context.Context) ([]byte, error) {
+					return h.fetchDomainViaWHOIS(fc, domain)
+				}, rdap.ErrNotFound)
+				if err == nil {
+					t.Fatal("lookup succeeded, want an error")
+				}
+				if err := h.handleError(c, err, "domain", domain); err != nil {
+					t.Fatalf("handleError() error = %v", err)
+				}
+				var body ErrorResponse
+				if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+					t.Fatalf("unmarshal body: %v", err)
+				}
+				return rec.Code, body.Error.Code, cached
+			}
+
+			status, code, cached := lookup()
+			if status != tt.wantStatus || code != tt.wantCode || cached {
+				t.Errorf("first lookup = (%d, %s, cached %v), want (%d, %s, cached false)", status, code, cached, tt.wantStatus, tt.wantCode)
+			}
+			status, code, cached = lookup()
+			if status != tt.wantStatus || code != tt.wantCode || cached != tt.wantCached {
+				t.Errorf("second lookup = (%d, %s, cached %v), want (%d, %s, cached %v)", status, code, cached, tt.wantStatus, tt.wantCode, tt.wantCached)
+			}
+			if upstreamCalls != tt.wantUpstream {
+				t.Errorf("WHOIS queries = %d, want %d", upstreamCalls, tt.wantUpstream)
+			}
+		})
 	}
 }

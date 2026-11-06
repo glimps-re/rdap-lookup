@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 func TestNewClient(t *testing.T) {
@@ -74,96 +76,89 @@ func TestClient_Options(t *testing.T) {
 }
 
 func TestClient_LookupDomain(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/domain/example.com" {
-			t.Errorf("unexpected path: %s", r.URL.Path)
-		}
-		if r.Method != http.MethodGet {
-			t.Errorf("unexpected method: %s", r.Method)
-		}
-
-		resp := DomainResponse{
-			Name:        "example.com",
-			Status:      []string{"active"},
-			CreatedDate: "2020-01-01T00:00:00Z",
-			Country:     "US",
-			DNSSEC:      &SimpleDNSSEC{Signed: true, DelegationSigned: true},
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	client, _ := NewClient(server.URL)
-	ctx := context.Background()
-
-	resp, err := client.LookupDomain(ctx, "example.com")
-	if err != nil {
-		t.Fatalf("LookupDomain() error = %v", err)
+	t.Parallel()
+	tests := []struct {
+		name     string
+		options  []Option
+		domain   string
+		body     string
+		wantPath string
+		want     *DomainResponse
+	}{
+		{
+			name:     "decodes the full response",
+			domain:   "example.com",
+			body:     `{"name":"example.com","status":["active"],"created_date":"2020-01-01T00:00:00Z","country":"US","dnssec":{"signed":true,"delegation_signed":true}}`,
+			wantPath: "/api/v1/domain/example.com",
+			want: &DomainResponse{
+				Name:        "example.com",
+				Status:      []string{"active"},
+				CreatedDate: "2020-01-01T00:00:00Z",
+				Country:     "US",
+				DNSSEC: &SimpleDNSSEC{
+					Signed:           true,
+					DelegationSigned: true,
+				},
+			},
+		},
+		{
+			name:     "data source",
+			domain:   "example.de",
+			body:     `{"name":"example.de","data_source":"whois","whois_server":"whois.denic.de","confidence":"high"}`,
+			wantPath: "/api/v1/domain/example.de",
+			want: &DomainResponse{
+				Name:        "example.de",
+				DataSource:  "whois",
+				WHOISServer: "whois.denic.de",
+				Confidence:  "high",
+			},
+		},
+		{
+			name:     "normalization reduces a subdomain to the registrable domain",
+			domain:   "www.example.com",
+			body:     `{"name":"example.com"}`,
+			wantPath: "/api/v1/domain/example.com",
+			want:     &DomainResponse{Name: "example.com"},
+		},
+		{
+			name:     "normalization disabled keeps the subdomain",
+			options:  []Option{WithDomainNormalization(false)},
+			domain:   "www.example.com",
+			body:     `{"name":"www.example.com"}`,
+			wantPath: "/api/v1/domain/www.example.com",
+			want:     &DomainResponse{Name: "www.example.com"},
+		},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != tc.wantPath {
+					t.Errorf("path = %s, want %s", r.URL.Path, tc.wantPath)
+				}
+				if r.Method != http.MethodGet {
+					t.Errorf("method = %s, want %s", r.Method, http.MethodGet)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if _, err := w.Write([]byte(tc.body)); err != nil {
+					t.Errorf("write response: %v", err)
+				}
+			}))
+			defer server.Close()
 
-	if resp.Name != "example.com" {
-		t.Errorf("Name = %s, want example.com", resp.Name)
-	}
-	if resp.Country != "US" {
-		t.Errorf("Country = %s, want US", resp.Country)
-	}
-	if resp.DNSSEC == nil || !resp.DNSSEC.Signed {
-		t.Error("DNSSEC.Signed = false, want true")
-	}
-}
+			client, err := NewClient(server.URL, tc.options...)
+			if err != nil {
+				t.Fatalf("NewClient() error = %v", err)
+			}
 
-func TestClient_LookupDomain_Normalization(t *testing.T) {
-	// Verify that subdomains are normalized to registrable domain
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Should receive normalized domain, not the subdomain
-		if r.URL.Path != "/api/v1/domain/example.com" {
-			t.Errorf("expected path /api/v1/domain/example.com, got %s", r.URL.Path)
-		}
-
-		resp := DomainResponse{Name: "example.com"}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	client, _ := NewClient(server.URL)
-	ctx := context.Background()
-
-	// Query with subdomain - should be normalized
-	resp, err := client.LookupDomain(ctx, "www.example.com")
-	if err != nil {
-		t.Fatalf("LookupDomain() error = %v", err)
-	}
-	if resp.Name != "example.com" {
-		t.Errorf("Name = %s, want example.com", resp.Name)
-	}
-}
-
-func TestClient_LookupDomain_NormalizationDisabled(t *testing.T) {
-	// Verify that normalization can be disabled
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Should receive the original subdomain when normalization is disabled
-		if r.URL.Path != "/api/v1/domain/www.example.com" {
-			t.Errorf("expected path /api/v1/domain/www.example.com, got %s", r.URL.Path)
-		}
-
-		resp := DomainResponse{Name: "www.example.com"}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	client, _ := NewClient(server.URL, WithDomainNormalization(false))
-	ctx := context.Background()
-
-	resp, err := client.LookupDomain(ctx, "www.example.com")
-	if err != nil {
-		t.Fatalf("LookupDomain() error = %v", err)
-	}
-	if resp.Name != "www.example.com" {
-		t.Errorf("Name = %s, want www.example.com", resp.Name)
+			got, err := client.LookupDomain(t.Context(), tc.domain)
+			if err != nil {
+				t.Fatalf("LookupDomain() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("DomainResponse mismatch (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
 
@@ -410,12 +405,14 @@ func TestClient_Meta(t *testing.T) {
 }
 
 func TestClient_ErrorHandling(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name           string
 		statusCode     int
 		responseBody   string
 		wantStatusCode int
 		wantCode       string
+		wantNotFound   bool
 	}{
 		{
 			name:           "not found",
@@ -423,6 +420,14 @@ func TestClient_ErrorHandling(t *testing.T) {
 			responseBody:   `{"error":{"code":"NOT_FOUND","message":"Domain not found"}}`,
 			wantStatusCode: 404,
 			wantCode:       "NOT_FOUND",
+			wantNotFound:   true,
+		},
+		{
+			name:           "no source",
+			statusCode:     404,
+			responseBody:   `{"error":{"code":"NO_SOURCE","message":"No registry source found for domain"}}`,
+			wantStatusCode: 404,
+			wantCode:       "NO_SOURCE",
 		},
 		{
 			name:           "rate limited",
@@ -442,17 +447,22 @@ func TestClient_ErrorHandling(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Parallel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(tt.statusCode)
-				_, _ = w.Write([]byte(tt.responseBody))
+				if _, err := w.Write([]byte(tt.responseBody)); err != nil {
+					t.Errorf("write response: %v", err)
+				}
 			}))
 			defer server.Close()
 
-			client, _ := NewClient(server.URL, WithMaxRetries(0))
-			ctx := context.Background()
+			client, err := NewClient(server.URL, WithMaxRetries(0))
+			if err != nil {
+				t.Fatalf("NewClient() error = %v", err)
+			}
 
-			_, err := client.LookupDomain(ctx, "test.com")
+			_, err = client.LookupDomain(t.Context(), "test.com")
 			if err == nil {
 				t.Fatal("expected error, got nil")
 			}
@@ -467,6 +477,9 @@ func TestClient_ErrorHandling(t *testing.T) {
 			}
 			if apiErr.Code != tt.wantCode {
 				t.Errorf("Code = %s, want %s", apiErr.Code, tt.wantCode)
+			}
+			if got := IsNotFoundError(err); got != tt.wantNotFound {
+				t.Errorf("IsNotFoundError() = %v, want %v", got, tt.wantNotFound)
 			}
 		})
 	}

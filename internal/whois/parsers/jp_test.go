@@ -1,7 +1,12 @@
 package parsers
 
 import (
+	"errors"
 	"testing"
+
+	"github.com/glimps-re/rdap-lookup/internal/whois"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 func TestJPParser_Name(t *testing.T) {
@@ -38,10 +43,18 @@ func TestJPParser_SupportsTLD(t *testing.T) {
 	}
 }
 
-func TestJPParser_Parse_BasicDomain(t *testing.T) {
-	p := NewJPParser()
-
-	response := `[ JPRS database provides information on network administration. Its use is    ]
+func TestJPParser_Parse(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		response string
+		domain   string
+		want     *whois.ParseResult
+		wantErr  error
+	}{
+		{
+			name: "basic domain",
+			response: `[ JPRS database provides information on network administration. Its use is    ]
 [ restricted to network administration purposes.                              ]
 
 Domain Information: [ドメイン情報]
@@ -54,89 +67,105 @@ p. [ネームサーバ]               ns2.example.jp
 [状態]                          Active
 [登録年月日]                    2000/01/15
 [最終更新]                      2024/01/15 10:30:00 (JST)
-`
-
-	result, err := p.Parse(response, "example.jp")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
+`,
+			domain: "example.jp",
+			want: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{
+					DomainName:  "example.jp",
+					Status:      []string{"Active"},
+					Nameservers: []string{"ns1.example.jp", "ns2.example.jp"},
+					CreatedDate: utc(2000, 1, 15, 0, 0, 0),
+					UpdatedDate: utc(2024, 1, 15, 10, 30, 0),
+					Registrant: &whois.ParsedEntity{
+						Handle:       "XX12345JP",
+						Organization: "Example Corporation",
+					},
+					TechContact: &whois.ParsedEntity{Handle: "YY67890JP"},
+				},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "jp",
+			},
+		},
+		{
+			name:     "not found: No match",
+			response: "No match!!\n",
+			domain:   "notfound.jp",
+			want: &whois.ParseResult{
+				Domain:     &whois.ParsedDomain{DomainName: "notfound.jp"},
+				Confidence: whois.ConfidenceLow,
+				ParserName: "jp",
+				Errors:     []string{"domain not found"},
+				NotFound:   true,
+			},
+			wantErr: whois.ErrDomainNotFound,
+		},
+		{
+			name:     "not found: Not found",
+			response: "Not found\n",
+			domain:   "notfound.jp",
+			want: &whois.ParseResult{
+				Domain:     &whois.ParsedDomain{DomainName: "notfound.jp"},
+				Confidence: whois.ConfidenceLow,
+				ParserName: "jp",
+				Errors:     []string{"domain not found"},
+				NotFound:   true,
+			},
+			wantErr: whois.ErrDomainNotFound,
+		},
+		{
+			name:     "not found: No entries",
+			response: "No entries found\n",
+			domain:   "notfound.jp",
+			want: &whois.ParseResult{
+				Domain:     &whois.ParsedDomain{DomainName: "notfound.jp"},
+				Confidence: whois.ConfidenceLow,
+				ParserName: "jp",
+				Errors:     []string{"domain not found"},
+				NotFound:   true,
+			},
+			wantErr: whois.ErrDomainNotFound,
+		},
+		{
+			name:   "empty response",
+			domain: "example.jp",
+			want: &whois.ParseResult{
+				Domain:     &whois.ParsedDomain{DomainName: "example.jp"},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "jp",
+			},
+			wantErr: whois.ErrNoRegistrationData,
+		},
+		{
+			name:     "DNSSEC: signing key present",
+			response: "a. [ドメイン名]                 EXAMPLE.JP\ns. [署名鍵]                     12345 3 13 ABC123...\n",
+			domain:   "example.jp",
+			want: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{
+					DomainName:   "example.jp",
+					DNSSECSigned: ptr(true),
+				},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "jp",
+			},
+			wantErr: whois.ErrNoRegistrationData,
+		},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := NewJPParser()
 
-	pd := result.Domain
-
-	if pd.DomainName != "example.jp" {
-		t.Errorf("DomainName = %q, want example.jp", pd.DomainName)
-	}
-
-	if len(pd.Nameservers) != 2 {
-		t.Errorf("len(Nameservers) = %d, want 2", len(pd.Nameservers))
-	} else if pd.Nameservers[0] != "ns1.example.jp" {
-		t.Errorf("Nameservers[0] = %q, want ns1.example.jp", pd.Nameservers[0])
-	}
-
-	if len(pd.Status) != 1 || pd.Status[0] != "Active" {
-		t.Errorf("Status = %v, want [Active]", pd.Status)
-	}
-
-	if pd.CreatedDate == nil || pd.CreatedDate.Year() != 2000 {
-		t.Errorf("CreatedDate = %v, want year 2000", pd.CreatedDate)
-	}
-
-	if pd.UpdatedDate == nil || pd.UpdatedDate.Year() != 2024 {
-		t.Errorf("UpdatedDate = %v, want year 2024", pd.UpdatedDate)
-	}
-
-	if pd.Registrant == nil || pd.Registrant.Organization != "Example Corporation" {
-		t.Errorf("Registrant.Organization = %v, want Example Corporation", pd.Registrant)
-	}
-
-	if pd.TechContact == nil || pd.TechContact.Handle != "YY67890JP" {
-		t.Errorf("TechContact.Handle = %v, want YY67890JP", pd.TechContact)
-	}
-
-	if result.Confidence != "high" {
-		t.Errorf("Confidence = %q, want high", result.Confidence)
-	}
-}
-
-func TestJPParser_Parse_NotFound(t *testing.T) {
-	p := NewJPParser()
-
-	tests := []struct {
-		name     string
-		response string
-	}{
-		{"No match", "No match!!\n"},
-		{"Not found", "Not found\n"},
-		{"No entries", "No entries found\n"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := p.Parse(tt.response, "notfound.jp")
+			got, err := p.Parse(tc.response, tc.domain)
 			if err != nil {
-				t.Fatalf("Parse error = %v", err)
+				t.Fatalf("Parse() error = %v", err)
 			}
-
-			if result.Confidence != "low" {
-				t.Errorf("Confidence = %q, want low", result.Confidence)
+			if diff := cmp.Diff(tc.want, got, cmpopts.IgnoreFields(whois.ParsedDomain{}, "RawResponse")); diff != "" {
+				t.Errorf("Parse() mismatch (-want +got):\n%s", diff)
 			}
-			if !result.NotFound {
-				t.Error("NotFound = false, want true")
+			if err := got.Err(); !errors.Is(err, tc.wantErr) {
+				t.Errorf("Err() = %v, want %v", err, tc.wantErr)
 			}
 		})
-	}
-}
-
-func TestJPParser_Parse_EmptyResponse(t *testing.T) {
-	p := NewJPParser()
-
-	result, err := p.Parse("", "example.jp")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
-	}
-
-	if result.Domain.DomainName != "example.jp" {
-		t.Errorf("DomainName = %q, want example.jp", result.Domain.DomainName)
 	}
 }
 
@@ -192,24 +221,6 @@ func TestNormalizeJPNameserver(t *testing.T) {
 				t.Errorf("normalizeJPNameserver(%q) = %q, want %q", tt.input, result, tt.expected)
 			}
 		})
-	}
-}
-
-func TestJPParser_Parse_DNSSEC(t *testing.T) {
-	p := NewJPParser()
-
-	response := `a. [ドメイン名]                 EXAMPLE.JP
-s. [署名鍵]                     12345 3 13 ABC123...
-`
-
-	result, err := p.Parse(response, "example.jp")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
-	}
-
-	// When s. key is present with a value, DNSSEC should be signed
-	if result.Domain.DNSSECSigned == nil || !*result.Domain.DNSSECSigned {
-		t.Error("DNSSECSigned should be true when signing key is present")
 	}
 }
 

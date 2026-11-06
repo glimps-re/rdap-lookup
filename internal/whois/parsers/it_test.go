@@ -1,7 +1,12 @@
 package parsers
 
 import (
+	"errors"
 	"testing"
+
+	"github.com/glimps-re/rdap-lookup/internal/whois"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 func TestITParser_Name(t *testing.T) {
@@ -34,10 +39,18 @@ func TestITParser_SupportsTLD(t *testing.T) {
 	}
 }
 
-func TestITParser_Parse_BasicDomain(t *testing.T) {
-	p := NewITParser()
-
-	response := `*********************************************************************
+func TestITParser_Parse(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		response string
+		domain   string
+		want     *whois.ParseResult
+		wantErr  error
+	}{
+		{
+			name: "basic domain",
+			response: `*********************************************************************
 * Please note that the following result could be a subgroup of      *
 * the data contained in the database.                               *
 *********************************************************************
@@ -68,99 +81,104 @@ Registrar
 Nameservers
   ns1.example.it
   ns2.example.it
-`
-
-	result, err := p.Parse(response, "example.it")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
+`,
+			domain: "example.it",
+			want: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{
+					DomainName:     "example.it",
+					Status:         []string{"ok"},
+					Nameservers:    []string{"ns1.example.it", "ns2.example.it"},
+					CreatedDate:    utc(2000, 1, 15, 0, 0, 0),
+					UpdatedDate:    utc(2024, 1, 15, 10, 30, 0),
+					ExpirationDate: utc(2025, 1, 15, 0, 0, 0),
+					Registrar: &whois.ParsedEntity{
+						Name:         "EXAMPLE-REG",
+						Organization: "Example Registrar S.r.l.",
+						Address:      "https://www.example-registrar.it",
+					},
+					Registrant: &whois.ParsedEntity{Organization: "Example S.r.l."},
+					AdminContact: &whois.ParsedEntity{
+						Name:         "Admin Contact Name",
+						Organization: "Example S.r.l.",
+					},
+					TechContact: &whois.ParsedEntity{
+						Name:         "Technical Contact Name",
+						Organization: "Example Hosting S.r.l.",
+					},
+				},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "it",
+			},
+		},
+		{
+			name:     "not found: Status available",
+			response: "Status:             AVAILABLE\n",
+			domain:   "notfound.it",
+			want: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{
+					DomainName: "notfound.it",
+					Status:     []string{"AVAILABLE"},
+				},
+				Confidence: whois.ConfidenceLow,
+				ParserName: "it",
+				Errors:     []string{"domain not found or available"},
+				NotFound:   true,
+			},
+			wantErr: whois.ErrDomainNotFound,
+		},
+		{
+			name:     "not found: Object not found",
+			response: "Object not found\n",
+			domain:   "notfound.it",
+			want: &whois.ParseResult{
+				Domain:     &whois.ParsedDomain{DomainName: "notfound.it"},
+				Confidence: whois.ConfidenceLow,
+				ParserName: "it",
+				Errors:     []string{"domain not found or available"},
+				NotFound:   true,
+			},
+			wantErr: whois.ErrDomainNotFound,
+		},
+		{
+			name:     "not found: No entries",
+			response: "No entries found\n",
+			domain:   "notfound.it",
+			want: &whois.ParseResult{
+				Domain:     &whois.ParsedDomain{DomainName: "notfound.it"},
+				Confidence: whois.ConfidenceLow,
+				ParserName: "it",
+				Errors:     []string{"domain not found or available"},
+				NotFound:   true,
+			},
+			wantErr: whois.ErrDomainNotFound,
+		},
+		{
+			name:   "empty response",
+			domain: "example.it",
+			want: &whois.ParseResult{
+				Domain:     &whois.ParsedDomain{DomainName: "example.it"},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "it",
+			},
+			wantErr: whois.ErrNoRegistrationData,
+		},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := NewITParser()
 
-	pd := result.Domain
-
-	if pd.DomainName != "example.it" {
-		t.Errorf("DomainName = %q, want example.it", pd.DomainName)
-	}
-
-	if len(pd.Status) != 1 || pd.Status[0] != "ok" {
-		t.Errorf("Status = %v, want [ok]", pd.Status)
-	}
-
-	if pd.CreatedDate == nil || pd.CreatedDate.Year() != 2000 {
-		t.Errorf("CreatedDate = %v, want year 2000", pd.CreatedDate)
-	}
-
-	if pd.UpdatedDate == nil || pd.UpdatedDate.Year() != 2024 {
-		t.Errorf("UpdatedDate = %v, want year 2024", pd.UpdatedDate)
-	}
-
-	if pd.ExpirationDate == nil || pd.ExpirationDate.Year() != 2025 {
-		t.Errorf("ExpirationDate = %v, want year 2025", pd.ExpirationDate)
-	}
-
-	if len(pd.Nameservers) != 2 {
-		t.Errorf("len(Nameservers) = %d, want 2", len(pd.Nameservers))
-	}
-
-	if pd.Registrant == nil || pd.Registrant.Organization != "Example S.r.l." {
-		t.Errorf("Registrant.Organization = %v, want Example S.r.l.", pd.Registrant)
-	}
-
-	if pd.AdminContact == nil || pd.AdminContact.Name != "Admin Contact Name" {
-		t.Errorf("AdminContact.Name = %v, want Admin Contact Name", pd.AdminContact)
-	}
-
-	if pd.TechContact == nil || pd.TechContact.Name != "Technical Contact Name" {
-		t.Errorf("TechContact.Name = %v, want Technical Contact Name", pd.TechContact)
-	}
-
-	if pd.Registrar == nil || pd.Registrar.Organization != "Example Registrar S.r.l." {
-		t.Errorf("Registrar.Organization = %v, want Example Registrar S.r.l.", pd.Registrar)
-	}
-
-	if result.Confidence != "high" {
-		t.Errorf("Confidence = %q, want high", result.Confidence)
-	}
-}
-
-func TestITParser_Parse_NotFound(t *testing.T) {
-	p := NewITParser()
-
-	tests := []struct {
-		name     string
-		response string
-	}{
-		{"Status available", "Status:             AVAILABLE\n"},
-		{"Object not found", "Object not found\n"},
-		{"No entries", "No entries found\n"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := p.Parse(tt.response, "notfound.it")
+			got, err := p.Parse(tc.response, tc.domain)
 			if err != nil {
-				t.Fatalf("Parse error = %v", err)
+				t.Fatalf("Parse() error = %v", err)
 			}
-
-			if result.Confidence != "low" {
-				t.Errorf("Confidence = %q, want low", result.Confidence)
+			if diff := cmp.Diff(tc.want, got, cmpopts.IgnoreFields(whois.ParsedDomain{}, "RawResponse")); diff != "" {
+				t.Errorf("Parse() mismatch (-want +got):\n%s", diff)
 			}
-			if !result.NotFound {
-				t.Error("NotFound = false, want true")
+			if err := got.Err(); !errors.Is(err, tc.wantErr) {
+				t.Errorf("Err() = %v, want %v", err, tc.wantErr)
 			}
 		})
-	}
-}
-
-func TestITParser_Parse_EmptyResponse(t *testing.T) {
-	p := NewITParser()
-
-	result, err := p.Parse("", "example.it")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
-	}
-
-	if result.Domain.DomainName != "example.it" {
-		t.Errorf("DomainName = %q, want example.it", result.Domain.DomainName)
 	}
 }
 

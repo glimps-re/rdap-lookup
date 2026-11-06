@@ -1,7 +1,12 @@
 package parsers
 
 import (
+	"errors"
 	"testing"
+
+	"github.com/glimps-re/rdap-lookup/internal/whois"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 func TestESParser_Name(t *testing.T) {
@@ -37,10 +42,18 @@ func TestESParser_SupportsTLD(t *testing.T) {
 	}
 }
 
-func TestESParser_Parse_BasicDomain(t *testing.T) {
-	p := NewESParser()
-
-	response := `Nombre de dominio / Domain name: example.es
+func TestESParser_Parse(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		response string
+		domain   string
+		want     *whois.ParseResult
+		wantErr  error
+	}{
+		{
+			name: "basic domain",
+			response: `Nombre de dominio / Domain name: example.es
 
 INFORMACIÓN DEL TITULAR / HOLDER INFORMATION
 Tipo de identificación / Identification Type: NIF/NIE
@@ -59,82 +72,104 @@ Servidores DNS / DNS Servers:
 Estado del dominio / Domain Status: activo/active
 Fecha de creación / Creation Date: 01/01/2000
 Fecha de caducidad / Expiration Date: 01/01/2025
-`
-
-	result, err := p.Parse(response, "example.es")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
+`,
+			domain: "example.es",
+			want: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{
+					DomainName:     "example.es",
+					Status:         []string{"activo/active"},
+					Nameservers:    []string{"ns1.example.es", "ns2.example.es"},
+					CreatedDate:    utc(2000, 1, 1, 0, 0, 0),
+					ExpirationDate: utc(2025, 1, 1, 0, 0, 0),
+					Registrar: &whois.ParsedEntity{
+						Name:    "Example Registrar, S.L.",
+						Address: "https://www.example-registrar.es",
+					},
+					Registrant: &whois.ParsedEntity{},
+				},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "es",
+			},
+		},
+		{
+			name:     "not found: No existe",
+			response: "El dominio no existe\n",
+			domain:   "notfound.es",
+			want: &whois.ParseResult{
+				Domain:     &whois.ParsedDomain{DomainName: "notfound.es"},
+				Confidence: whois.ConfidenceLow,
+				ParserName: "es",
+				Errors:     []string{"domain not found"},
+				NotFound:   true,
+			},
+			wantErr: whois.ErrDomainNotFound,
+		},
+		{
+			name:     "not found: Does not exist",
+			response: "Domain does not exist\n",
+			domain:   "notfound.es",
+			want: &whois.ParseResult{
+				Domain:     &whois.ParsedDomain{DomainName: "notfound.es"},
+				Confidence: whois.ConfidenceLow,
+				ParserName: "es",
+				Errors:     []string{"domain not found"},
+				NotFound:   true,
+			},
+			wantErr: whois.ErrDomainNotFound,
+		},
+		{
+			name:     "not found: Not found",
+			response: "Not found\n",
+			domain:   "notfound.es",
+			want: &whois.ParseResult{
+				Domain:     &whois.ParsedDomain{DomainName: "notfound.es"},
+				Confidence: whois.ConfidenceLow,
+				ParserName: "es",
+				Errors:     []string{"domain not found"},
+				NotFound:   true,
+			},
+			wantErr: whois.ErrDomainNotFound,
+		},
+		{
+			name:     "not found: No match",
+			response: "No match for domain\n",
+			domain:   "notfound.es",
+			want: &whois.ParseResult{
+				Domain:     &whois.ParsedDomain{DomainName: "notfound.es"},
+				Confidence: whois.ConfidenceLow,
+				ParserName: "es",
+				Errors:     []string{"domain not found"},
+				NotFound:   true,
+			},
+			wantErr: whois.ErrDomainNotFound,
+		},
+		{
+			name:   "empty response",
+			domain: "example.es",
+			want: &whois.ParseResult{
+				Domain:     &whois.ParsedDomain{DomainName: "example.es"},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "es",
+			},
+			wantErr: whois.ErrNoRegistrationData,
+		},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := NewESParser()
 
-	pd := result.Domain
-
-	if pd.DomainName != "example.es" {
-		t.Errorf("DomainName = %q, want example.es", pd.DomainName)
-	}
-
-	if len(pd.Nameservers) != 2 {
-		t.Errorf("len(Nameservers) = %d, want 2", len(pd.Nameservers))
-	} else if pd.Nameservers[0] != "ns1.example.es" {
-		t.Errorf("Nameservers[0] = %q, want ns1.example.es", pd.Nameservers[0])
-	}
-
-	if pd.CreatedDate == nil || pd.CreatedDate.Year() != 2000 {
-		t.Errorf("CreatedDate = %v, want year 2000", pd.CreatedDate)
-	}
-
-	if pd.ExpirationDate == nil || pd.ExpirationDate.Year() != 2025 {
-		t.Errorf("ExpirationDate = %v, want year 2025", pd.ExpirationDate)
-	}
-
-	if pd.Registrar == nil || pd.Registrar.Name != "Example Registrar, S.L." {
-		t.Errorf("Registrar.Name = %v, want Example Registrar, S.L.", pd.Registrar)
-	}
-
-	if result.Confidence != "high" {
-		t.Errorf("Confidence = %q, want high", result.Confidence)
-	}
-}
-
-func TestESParser_Parse_NotFound(t *testing.T) {
-	p := NewESParser()
-
-	tests := []struct {
-		name     string
-		response string
-	}{
-		{"No existe", "El dominio no existe\n"},
-		{"Does not exist", "Domain does not exist\n"},
-		{"Not found", "Not found\n"},
-		{"No match", "No match for domain\n"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := p.Parse(tt.response, "notfound.es")
+			got, err := p.Parse(tc.response, tc.domain)
 			if err != nil {
-				t.Fatalf("Parse error = %v", err)
+				t.Fatalf("Parse() error = %v", err)
 			}
-
-			if result.Confidence != "low" {
-				t.Errorf("Confidence = %q, want low", result.Confidence)
+			if diff := cmp.Diff(tc.want, got, cmpopts.IgnoreFields(whois.ParsedDomain{}, "RawResponse")); diff != "" {
+				t.Errorf("Parse() mismatch (-want +got):\n%s", diff)
 			}
-			if !result.NotFound {
-				t.Error("NotFound = false, want true")
+			if err := got.Err(); !errors.Is(err, tc.wantErr) {
+				t.Errorf("Err() = %v, want %v", err, tc.wantErr)
 			}
 		})
-	}
-}
-
-func TestESParser_Parse_EmptyResponse(t *testing.T) {
-	p := NewESParser()
-
-	result, err := p.Parse("", "example.es")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
-	}
-
-	if result.Domain.DomainName != "example.es" {
-		t.Errorf("DomainName = %q, want example.es", result.Domain.DomainName)
 	}
 }
 

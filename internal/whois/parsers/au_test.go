@@ -1,7 +1,12 @@
 package parsers
 
 import (
+	"errors"
 	"testing"
+
+	"github.com/glimps-re/rdap-lookup/internal/whois"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 func TestAUParser_Name(t *testing.T) {
@@ -41,10 +46,18 @@ func TestAUParser_SupportsTLD(t *testing.T) {
 	}
 }
 
-func TestAUParser_Parse_BasicDomain(t *testing.T) {
-	p := NewAUParser()
-
-	response := `Domain Name: example.com.au
+func TestAUParser_Parse(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		response string
+		domain   string
+		want     *whois.ParseResult
+		wantErr  error
+	}{
+		{
+			name: "basic domain",
+			response: `Domain Name: example.com.au
 Registry Domain ID: D12345678-AU
 Registrar: Example Registrar Pty Ltd
 Status: ok
@@ -56,238 +69,305 @@ Name Server: ns1.example.com.au
 Name Server: ns2.example.com.au
 DNSSEC: unsigned
 Last Modified: 2024-01-15T10:30:00Z
-`
-
-	result, err := p.Parse(response, "example.com.au")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
-	}
-
-	pd := result.Domain
-
-	if pd.DomainName != "example.com.au" {
-		t.Errorf("DomainName = %q, want example.com.au", pd.DomainName)
-	}
-
-	if pd.RegistryDomainID != "D12345678-AU" {
-		t.Errorf("RegistryDomainID = %q, want D12345678-AU", pd.RegistryDomainID)
-	}
-
-	if len(pd.Status) != 1 || pd.Status[0] != "ok" {
-		t.Errorf("Status = %v, want [ok]", pd.Status)
-	}
-
-	if len(pd.Nameservers) != 2 {
-		t.Errorf("len(Nameservers) = %d, want 2", len(pd.Nameservers))
-	}
-
-	if pd.UpdatedDate == nil {
-		t.Error("UpdatedDate should not be nil")
-	} else if pd.UpdatedDate.Year() != 2024 {
-		t.Errorf("UpdatedDate.Year() = %d, want 2024", pd.UpdatedDate.Year())
-	}
-
-	if pd.Registrar == nil {
-		t.Error("Registrar should not be nil")
-	} else if pd.Registrar.Name != "Example Registrar Pty Ltd" {
-		t.Errorf("Registrar.Name = %q, want Example Registrar Pty Ltd", pd.Registrar.Name)
-	}
-
-	if pd.Registrant == nil {
-		t.Fatal("Registrant should not be nil")
-	}
-	if pd.Registrant.Name != "Example Company Pty Ltd" {
-		t.Errorf("Registrant.Name = %q, want Example Company Pty Ltd", pd.Registrant.Name)
-	}
-	if pd.Registrant.Handle != "ABC123" {
-		t.Errorf("Registrant.Handle = %q, want ABC123", pd.Registrant.Handle)
-	}
-
-	if pd.TechContact == nil {
-		t.Fatal("TechContact should not be nil")
-	}
-	if pd.TechContact.Name != "Technical Support" {
-		t.Errorf("TechContact.Name = %q, want Technical Support", pd.TechContact.Name)
-	}
-
-	if result.Confidence != "high" {
-		t.Errorf("Confidence = %q, want high", result.Confidence)
-	}
-
-	if result.ParserName != "au" {
-		t.Errorf("ParserName = %q, want au", result.ParserName)
-	}
-}
-
-func TestAUParser_Parse_WithDates(t *testing.T) {
-	p := NewAUParser()
-
-	response := `Domain Name: example.com.au
+`,
+			domain: "example.com.au",
+			want: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{
+					DomainName:       "example.com.au",
+					RegistryDomainID: "D12345678-AU",
+					Status:           []string{"ok"},
+					Nameservers:      []string{"ns1.example.com.au", "ns2.example.com.au"},
+					UpdatedDate:      utc(2024, 1, 15, 10, 30, 0),
+					Registrar:        &whois.ParsedEntity{Name: "Example Registrar Pty Ltd"},
+					Registrant: &whois.ParsedEntity{
+						Handle: "ABC123",
+						Name:   "Example Company Pty Ltd",
+					},
+					TechContact: &whois.ParsedEntity{
+						Handle: "XYZ789",
+						Name:   "Technical Support",
+					},
+					DNSSECSigned: ptr(false),
+				},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "au",
+			},
+		},
+		{
+			name: "with dates",
+			response: `Domain Name: example.com.au
 Status: ok
 Creation Date: 2000-05-20T00:00:00Z
 Last Modified: 2024-01-15T10:30:00Z
 Registry Expiry Date: 2025-05-20T00:00:00Z
-`
-
-	result, err := p.Parse(response, "example.com.au")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
-	}
-
-	pd := result.Domain
-
-	if pd.CreatedDate == nil {
-		t.Error("CreatedDate should not be nil")
-	} else if pd.CreatedDate.Year() != 2000 {
-		t.Errorf("CreatedDate.Year() = %d, want 2000", pd.CreatedDate.Year())
-	}
-
-	if pd.UpdatedDate == nil {
-		t.Error("UpdatedDate should not be nil")
-	} else if pd.UpdatedDate.Year() != 2024 {
-		t.Errorf("UpdatedDate.Year() = %d, want 2024", pd.UpdatedDate.Year())
-	}
-
-	if pd.ExpirationDate == nil {
-		t.Error("ExpirationDate should not be nil")
-	} else if pd.ExpirationDate.Year() != 2025 {
-		t.Errorf("ExpirationDate.Year() = %d, want 2025", pd.ExpirationDate.Year())
-	}
-}
-
-func TestAUParser_Parse_NotFound(t *testing.T) {
-	p := NewAUParser()
-
-	tests := []struct {
-		name     string
-		response string
-	}{
-		{"No Data Found", "No Data Found\n"},
-		{"Not found", "Domain not found\n"},
-		{"No entries", "No entries found\n"},
-		{"No match", "No match for domain\n"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := p.Parse(tt.response, "notfound.com.au")
-			if err != nil {
-				t.Fatalf("Parse error = %v", err)
-			}
-
-			if result.Confidence != "low" {
-				t.Errorf("Confidence = %q, want low", result.Confidence)
-			}
-			if !result.NotFound {
-				t.Error("NotFound = false, want true")
-			}
-
-			if len(result.Errors) == 0 {
-				t.Error("Expected errors to be populated")
-			}
-		})
-	}
-}
-
-func TestAUParser_Parse_DNSSEC(t *testing.T) {
-	p := NewAUParser()
-
-	tests := []struct {
-		name     string
-		response string
-		expected bool
-	}{
+`,
+			domain: "example.com.au",
+			want: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{
+					DomainName:     "example.com.au",
+					Status:         []string{"ok"},
+					CreatedDate:    utc(2000, 5, 20, 0, 0, 0),
+					UpdatedDate:    utc(2024, 1, 15, 10, 30, 0),
+					ExpirationDate: utc(2025, 5, 20, 0, 0, 0),
+				},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "au",
+			},
+		},
 		{
-			name:     "DNSSEC signed",
+			name:     "not found: No Data Found",
+			response: "No Data Found\n",
+			domain:   "notfound.com.au",
+			want: &whois.ParseResult{
+				Domain:     &whois.ParsedDomain{DomainName: "notfound.com.au"},
+				Confidence: whois.ConfidenceLow,
+				ParserName: "au",
+				Errors:     []string{"domain not found"},
+				NotFound:   true,
+			},
+			wantErr: whois.ErrDomainNotFound,
+		},
+		{
+			name:     "not found: Not found",
+			response: "Domain not found\n",
+			domain:   "notfound.com.au",
+			want: &whois.ParseResult{
+				Domain:     &whois.ParsedDomain{DomainName: "notfound.com.au"},
+				Confidence: whois.ConfidenceLow,
+				ParserName: "au",
+				Errors:     []string{"domain not found"},
+				NotFound:   true,
+			},
+			wantErr: whois.ErrDomainNotFound,
+		},
+		{
+			name:     "not found: No entries",
+			response: "No entries found\n",
+			domain:   "notfound.com.au",
+			want: &whois.ParseResult{
+				Domain:     &whois.ParsedDomain{DomainName: "notfound.com.au"},
+				Confidence: whois.ConfidenceLow,
+				ParserName: "au",
+				Errors:     []string{"domain not found"},
+				NotFound:   true,
+			},
+			wantErr: whois.ErrDomainNotFound,
+		},
+		{
+			name:     "not found: No match",
+			response: "No match for domain\n",
+			domain:   "notfound.com.au",
+			want: &whois.ParseResult{
+				Domain:     &whois.ParsedDomain{DomainName: "notfound.com.au"},
+				Confidence: whois.ConfidenceLow,
+				ParserName: "au",
+				Errors:     []string{"domain not found"},
+				NotFound:   true,
+			},
+			wantErr: whois.ErrDomainNotFound,
+		},
+		{
+			name:     "DNSSEC: DNSSEC signed",
 			response: "Domain Name: example.com.au\nDNSSEC: signedDelegation\n",
-			expected: true,
+			domain:   "example.com.au",
+			want: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{
+					DomainName:   "example.com.au",
+					DNSSECSigned: ptr(true),
+				},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "au",
+			},
+			wantErr: whois.ErrNoRegistrationData,
 		},
 		{
-			name:     "DNSSEC unsigned",
+			name:     "DNSSEC: DNSSEC unsigned",
 			response: "Domain Name: example.com.au\nDNSSEC: unsigned\n",
-			expected: false,
+			domain:   "example.com.au",
+			want: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{
+					DomainName:   "example.com.au",
+					DNSSECSigned: ptr(false),
+				},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "au",
+			},
+			wantErr: whois.ErrNoRegistrationData,
 		},
 		{
-			name:     "DNSSEC no",
+			name:     "DNSSEC: DNSSEC no",
 			response: "Domain Name: example.com.au\nDNSSEC: no\n",
-			expected: false,
+			domain:   "example.com.au",
+			want: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{
+					DomainName:   "example.com.au",
+					DNSSECSigned: ptr(false),
+				},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "au",
+			},
+			wantErr: whois.ErrNoRegistrationData,
 		},
 		{
-			name:     "DNSSEC N",
+			name:     "DNSSEC: DNSSEC N",
 			response: "Domain Name: example.com.au\nDNSSEC: N\n",
-			expected: false,
+			domain:   "example.com.au",
+			want: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{
+					DomainName:   "example.com.au",
+					DNSSECSigned: ptr(false),
+				},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "au",
+			},
+			wantErr: whois.ErrNoRegistrationData,
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := p.Parse(tt.response, "example.com.au")
-			if err != nil {
-				t.Fatalf("Parse error = %v", err)
-			}
-
-			if result.Domain.DNSSECSigned == nil {
-				t.Fatal("DNSSECSigned should not be nil")
-			}
-
-			if *result.Domain.DNSSECSigned != tt.expected {
-				t.Errorf("DNSSECSigned = %v, want %v", *result.Domain.DNSSECSigned, tt.expected)
-			}
-		})
-	}
-}
-
-func TestAUParser_Parse_StatusWithURLs(t *testing.T) {
-	p := NewAUParser()
-
-	response := `Domain Name: example.com.au
-Domain Status: clientTransferProhibited https://icann.org/epp#clientTransferProhibited
-Domain Status: clientDeleteProhibited https://icann.org/epp#clientDeleteProhibited
-`
-
-	result, err := p.Parse(response, "example.com.au")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
-	}
-
-	// URLs should be stripped from status
-	for _, status := range result.Domain.Status {
-		if status == "" || status[0:4] == "http" {
-			t.Errorf("Status should not contain URLs or be empty: %q", status)
-		}
-	}
-}
-
-func TestAUParser_Parse_EmptyResponse(t *testing.T) {
-	p := NewAUParser()
-
-	result, err := p.Parse("", "example.com.au")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
-	}
-
-	if result.Domain.DomainName != "example.com.au" {
-		t.Errorf("DomainName = %q, want example.com.au", result.Domain.DomainName)
-	}
-}
-
-func TestAUParser_Parse_CommentLines(t *testing.T) {
-	p := NewAUParser()
-
-	response := `% WHOIS data for .au domains
+		{
+			name:     "status with URLs stripped",
+			response: "Domain Name: example.com.au\nDomain Status: clientTransferProhibited https://icann.org/epp#clientTransferProhibited\nDomain Status: clientDeleteProhibited https://icann.org/epp#clientDeleteProhibited\n",
+			domain:   "example.com.au",
+			want: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{
+					DomainName: "example.com.au",
+					Status:     []string{"clientTransferProhibited", "clientDeleteProhibited"},
+				},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "au",
+			},
+			wantErr: whois.ErrNoRegistrationData,
+		},
+		{
+			name:   "empty response",
+			domain: "example.com.au",
+			want: &whois.ParseResult{
+				Domain:     &whois.ParsedDomain{DomainName: "example.com.au"},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "au",
+			},
+			wantErr: whois.ErrNoRegistrationData,
+		},
+		{
+			name: "comment lines",
+			response: `% WHOIS data for .au domains
 % Rate limit exceeded
 # Comment line
 Domain Name: example.com.au
 Status: ok
-`
-
-	result, err := p.Parse(response, "example.com.au")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
+`,
+			domain: "example.com.au",
+			want: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{
+					DomainName: "example.com.au",
+					Status:     []string{"ok"},
+				},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "au",
+			},
+			wantErr: whois.ErrNoRegistrationData,
+		},
+		{
+			name: "real-world auDA format",
+			response: `Domain Name: google.com.au
+Registry Domain ID: D12345678-AU
+Registrar WHOIS Server: whois.auda.org.au
+Registrar URL: http://www.markmonitor.com
+Last Modified: 2023-12-15T10:30:00Z
+Registrar: MarkMonitor Inc.
+Registrar Abuse Contact Email: abusecomplaints@markmonitor.com
+Registrar Abuse Contact Phone: +1.2083895740
+Status: clientDeleteProhibited
+Status: clientTransferProhibited
+Status: clientUpdateProhibited
+Registrant Contact ID: GOOG123
+Registrant Contact Name: Domain Administrator
+Tech Contact ID: TECH456
+Tech Contact Name: Technical Support
+Name Server: ns1.google.com
+Name Server: ns2.google.com
+Name Server: ns3.google.com
+Name Server: ns4.google.com
+DNSSEC: unsigned
+`,
+			domain: "google.com.au",
+			want: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{
+					DomainName:       "google.com.au",
+					RegistryDomainID: "D12345678-AU",
+					Status:           []string{"clientDeleteProhibited", "clientTransferProhibited", "clientUpdateProhibited"},
+					Nameservers:      []string{"ns1.google.com", "ns2.google.com", "ns3.google.com", "ns4.google.com"},
+					UpdatedDate:      utc(2023, 12, 15, 10, 30, 0),
+					Registrar: &whois.ParsedEntity{
+						Name:  "MarkMonitor Inc.",
+						Email: "abusecomplaints@markmonitor.com",
+						Phone: "+1.2083895740",
+					},
+					Registrant: &whois.ParsedEntity{
+						Handle: "GOOG123",
+						Name:   "Domain Administrator",
+					},
+					TechContact: &whois.ParsedEntity{
+						Handle: "TECH456",
+						Name:   "Technical Support",
+					},
+					DNSSECSigned: ptr(false),
+				},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "au",
+			},
+		},
+		{
+			name:     "admin contact",
+			response: "Domain Name: example.com.au\nAdmin Contact ID: ADM001\nAdmin Contact Name: Admin Person\n",
+			domain:   "example.com.au",
+			want: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{
+					DomainName: "example.com.au",
+					AdminContact: &whois.ParsedEntity{
+						Handle: "ADM001",
+						Name:   "Admin Person",
+					},
+				},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "au",
+			},
+		},
+		{
+			name: "registered domain mentioning not found",
+			response: `Domain Name: example.com.au
+Registrar: Example Registrar Pty Ltd
+Name Server: ns1.example.com.au
+Last Modified: 2024-01-15T10:30:00Z
+Remarks: page not found errors can be reported to the registrar
+`,
+			domain: "example.com.au",
+			want: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{
+					DomainName:  "example.com.au",
+					Nameservers: []string{"ns1.example.com.au"},
+					UpdatedDate: utc(2024, 1, 15, 10, 30, 0),
+					Registrar:   &whois.ParsedEntity{Name: "Example Registrar Pty Ltd"},
+				},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "au",
+			},
+		},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := NewAUParser()
 
-	if result.Domain.DomainName != "example.com.au" {
-		t.Errorf("DomainName = %q, want example.com.au", result.Domain.DomainName)
+			got, err := p.Parse(tc.response, tc.domain)
+			if err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.want, got, cmpopts.IgnoreFields(whois.ParsedDomain{}, "RawResponse")); diff != "" {
+				t.Errorf("Parse() mismatch (-want +got):\n%s", diff)
+			}
+			if err := got.Err(); !errors.Is(err, tc.wantErr) {
+				t.Errorf("Err() = %v, want %v", err, tc.wantErr)
+			}
+		})
 	}
 }
 
@@ -347,90 +427,6 @@ func TestNormalizeAUNameserver(t *testing.T) {
 				t.Errorf("normalizeAUNameserver(%q) = %q, want %q", tt.input, result, tt.expected)
 			}
 		})
-	}
-}
-
-func TestAUParser_Parse_RealWorldFormat(t *testing.T) {
-	p := NewAUParser()
-
-	// Simulated real-world auDA response format
-	response := `Domain Name: google.com.au
-Registry Domain ID: D12345678-AU
-Registrar WHOIS Server: whois.auda.org.au
-Registrar URL: http://www.markmonitor.com
-Last Modified: 2023-12-15T10:30:00Z
-Registrar: MarkMonitor Inc.
-Registrar Abuse Contact Email: abusecomplaints@markmonitor.com
-Registrar Abuse Contact Phone: +1.2083895740
-Status: clientDeleteProhibited
-Status: clientTransferProhibited
-Status: clientUpdateProhibited
-Registrant Contact ID: GOOG123
-Registrant Contact Name: Domain Administrator
-Tech Contact ID: TECH456
-Tech Contact Name: Technical Support
-Name Server: ns1.google.com
-Name Server: ns2.google.com
-Name Server: ns3.google.com
-Name Server: ns4.google.com
-DNSSEC: unsigned
-`
-
-	result, err := p.Parse(response, "google.com.au")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
-	}
-
-	pd := result.Domain
-
-	if pd.DomainName != "google.com.au" {
-		t.Errorf("DomainName = %q, want google.com.au", pd.DomainName)
-	}
-
-	if len(pd.Status) != 3 {
-		t.Errorf("len(Status) = %d, want 3", len(pd.Status))
-	}
-
-	if len(pd.Nameservers) != 4 {
-		t.Errorf("len(Nameservers) = %d, want 4", len(pd.Nameservers))
-	}
-
-	if pd.Registrar == nil {
-		t.Fatal("Registrar should not be nil")
-	}
-	if pd.Registrar.Name != "MarkMonitor Inc." {
-		t.Errorf("Registrar.Name = %q, want MarkMonitor Inc.", pd.Registrar.Name)
-	}
-	if pd.Registrar.Email != "abusecomplaints@markmonitor.com" {
-		t.Errorf("Registrar.Email = %q, want abusecomplaints@markmonitor.com", pd.Registrar.Email)
-	}
-
-	if pd.Registrant.Name != "Domain Administrator" {
-		t.Errorf("Registrant.Name = %q, want Domain Administrator", pd.Registrant.Name)
-	}
-}
-
-func TestAUParser_Parse_AdminContact(t *testing.T) {
-	p := NewAUParser()
-
-	response := `Domain Name: example.com.au
-Admin Contact ID: ADM001
-Admin Contact Name: Admin Person
-`
-
-	result, err := p.Parse(response, "example.com.au")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
-	}
-
-	if result.Domain.AdminContact == nil {
-		t.Fatal("AdminContact should not be nil")
-	}
-	if result.Domain.AdminContact.Handle != "ADM001" {
-		t.Errorf("AdminContact.Handle = %q, want ADM001", result.Domain.AdminContact.Handle)
-	}
-	if result.Domain.AdminContact.Name != "Admin Person" {
-		t.Errorf("AdminContact.Name = %q, want Admin Person", result.Domain.AdminContact.Name)
 	}
 }
 

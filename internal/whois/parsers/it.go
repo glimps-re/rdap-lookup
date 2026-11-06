@@ -71,17 +71,10 @@ func (p *ITParser) Parse(response string, domain string) (*whois.ParseResult, er
 	pd := result.Domain
 	pd.RawResponse = response
 
-	// Check for "Status: AVAILABLE" or "AVAILABLE"
 	responseLower := strings.ToLower(response)
-	if strings.Contains(responseLower, "status:             available") ||
+	notFound := strings.Contains(responseLower, "status:             available") ||
 		strings.Contains(responseLower, "object not found") ||
-		strings.Contains(responseLower, "no entries found") {
-		result.Confidence = whois.ConfidenceLow
-		result.Errors = append(result.Errors, "domain not found or available")
-		result.NotFound = true
-		pd.DomainName = strings.ToLower(domain)
-		return result, nil
-	}
+		strings.Contains(responseLower, "no entries found")
 
 	// Parse the response line by line
 	currentSection := ""
@@ -173,6 +166,8 @@ func (p *ITParser) Parse(response string, domain string) (*whois.ParseResult, er
 	if pd.DomainName == "" {
 		pd.DomainName = strings.ToLower(domain)
 	}
+
+	result.MarkNotFound(notFound, "domain not found or available")
 
 	return result, nil
 }

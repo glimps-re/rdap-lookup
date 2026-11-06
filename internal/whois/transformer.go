@@ -10,7 +10,7 @@ import (
 // TransformToSimpleDomain converts a ParseResult to a SimpleDomain.
 // This allows WHOIS data to be returned in the same format as RDAP data.
 func TransformToSimpleDomain(result *ParseResult) *schema.SimpleDomain {
-	if result == nil || result.Domain == nil || result.NotFound {
+	if result == nil || result.Domain == nil {
 		return nil
 	}
 

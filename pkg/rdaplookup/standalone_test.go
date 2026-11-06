@@ -4,6 +4,10 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
+
+	"github.com/glimps-re/rdap-lookup/internal/schema"
 )
 
 func TestNewStandaloneClient(t *testing.T) {
@@ -232,5 +236,54 @@ func BenchmarkStandaloneClient_Create(b *testing.B) {
 		if err := client.Close(); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func TestDomainFromSchema(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		domain *schema.SimpleDomain
+		want   *DomainResponse
+	}{
+		{
+			name: "nil domain",
+		},
+		{
+			name: "WHOIS source",
+			domain: &schema.SimpleDomain{
+				Name:        "example.de",
+				DataSource:  "whois",
+				WHOISServer: "whois.denic.de",
+				Confidence:  "high",
+			},
+			want: &DomainResponse{
+				Name:        "example.de",
+				DataSource:  "whois",
+				WHOISServer: "whois.denic.de",
+				Confidence:  "high",
+			},
+		},
+		{
+			name: "RDAP source",
+			domain: &schema.SimpleDomain{
+				Name:       "example.com",
+				DataSource: "rdap",
+				RDAPServer: "https://rdap.verisign.com/com/v1/",
+			},
+			want: &DomainResponse{
+				Name:       "example.com",
+				DataSource: "rdap",
+				RDAPServer: "https://rdap.verisign.com/com/v1/",
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if diff := cmp.Diff(tc.want, domainFromSchema(tc.domain)); diff != "" {
+				t.Errorf("DomainResponse mismatch (-want +got):\n%s", diff)
+			}
+		})
 	}
 }

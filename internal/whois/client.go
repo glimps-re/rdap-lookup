@@ -24,6 +24,7 @@ var (
 	ErrDomainNotFound = errors.New("domain not found")
 	// ErrServerNotAvailable is returned when the WHOIS server is not available.
 	ErrServerNotAvailable = errors.New("WHOIS server not available")
+	ErrNoRegistrationData = errors.New("WHOIS response holds no registration data")
 )
 
 const (

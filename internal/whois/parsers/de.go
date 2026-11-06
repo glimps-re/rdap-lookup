@@ -50,17 +50,10 @@ func (p *DEParser) Parse(response string, domain string) (*whois.ParseResult, er
 	pd := result.Domain
 	pd.RawResponse = response
 
-	// Check for "Status: free" or "% Object not found"
 	responseLower := strings.ToLower(response)
-	if strings.Contains(response, "Status: free") ||
+	notFound := strings.Contains(response, "Status: free") ||
 		strings.Contains(responseLower, "object not found") ||
-		strings.Contains(responseLower, "no entries found") {
-		result.Confidence = whois.ConfidenceLow
-		result.Errors = append(result.Errors, "domain not found or free")
-		result.NotFound = true
-		pd.DomainName = strings.ToLower(domain)
-		return result, nil
-	}
+		strings.Contains(responseLower, "no entries found")
 
 	// Parse the response line by line
 	currentSection := ""
@@ -128,6 +121,8 @@ func (p *DEParser) Parse(response string, domain string) (*whois.ParseResult, er
 	if pd.DomainName == "" {
 		pd.DomainName = strings.ToLower(domain)
 	}
+
+	result.MarkNotFound(notFound, "domain not found or free")
 
 	return result, nil
 }

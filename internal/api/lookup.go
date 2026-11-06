@@ -27,10 +27,16 @@ import (
 const (
 	OutcomeSuccess     = "success"
 	OutcomeNotFound    = "not_found"
+	OutcomeNoSource    = "no_source"
 	OutcomeError       = "error"
 	OutcomeTimeout     = "timeout"
 	OutcomeRateLimited = "rate_limited"
 )
+
+type whoisQuerier interface {
+	Query(ctx context.Context, domain string) (*whois.QueryResult, error)
+	Close() error
+}
 
 // LookupHandler handles RDAP lookup requests.
 type LookupHandler struct {
@@ -47,7 +53,7 @@ type LookupHandler struct {
 	handlerTimeout time.Duration
 
 	// WHOIS fallback support
-	whoisClient   *whois.Client
+	whoisClient   whoisQuerier
 	whoisRegistry *whois.ParserRegistry
 	whoisEnabled  bool
 }
@@ -120,6 +126,8 @@ func (h *LookupHandler) recordLookupMetrics(lookupType string, err error, cached
 		switch {
 		case errors.Is(err, rdap.ErrNotFound):
 			outcome = OutcomeNotFound
+		case isNoSource(err):
+			outcome = OutcomeNoSource
 		case errors.Is(err, rdap.ErrRateLimited):
 			outcome = OutcomeRateLimited
 		case errors.Is(err, context.DeadlineExceeded):
@@ -244,10 +252,6 @@ func (h *LookupHandler) fetchDomainViaWHOIS(ctx context.Context, name string) ([
 			tld := whois.ExtractTLD(name)
 			h.metrics.WHOISParseErrorsTotal.WithLabelValues(tld).Inc()
 		}
-		// Convert WHOIS errors to appropriate error types
-		if errors.Is(err, whois.ErrDomainNotFound) {
-			return nil, rdap.ErrNotFound
-		}
 		return nil, err
 	}
 
@@ -255,6 +259,12 @@ func (h *LookupHandler) fetchDomainViaWHOIS(ctx context.Context, name string) ([
 	tld := whois.ExtractTLD(name)
 	parser := h.whoisRegistry.GetParser(tld)
 	parseResult, err := parser.Parse(queryResult.Response, name)
+	if err == nil {
+		err = parseResult.Err()
+	}
+	if errors.Is(err, whois.ErrDomainNotFound) {
+		return nil, rdap.ErrNotFound
+	}
 	if err != nil {
 		if h.metrics != nil {
 			h.metrics.WHOISParseErrorsTotal.WithLabelValues(tld).Inc()
@@ -262,18 +272,9 @@ func (h *LookupHandler) fetchDomainViaWHOIS(ctx context.Context, name string) ([
 		return nil, err
 	}
 
-	// Set the WHOIS server in the parsed domain
-	if parseResult.Domain != nil {
-		parseResult.Domain.WHOISServer = queryResult.Server
-	}
+	parseResult.Domain.WHOISServer = queryResult.Server
 
-	// Transform to SimpleDomain
-	result := whois.TransformToSimpleDomain(parseResult)
-	if result == nil {
-		return nil, rdap.ErrNotFound
-	}
-
-	return json.Marshal(result)
+	return json.Marshal(whois.TransformToSimpleDomain(parseResult))
 }
 
 // LookupIP handles IP lookup requests.
@@ -636,8 +637,8 @@ func sanitizeBatchError(err error) string {
 		return "not found"
 	case errors.Is(err, rdap.ErrRateLimited):
 		return "rate limited"
-	case errors.Is(err, bootstrap.ErrNotFound):
-		return "no RDAP server found"
+	case isNoSource(err):
+		return "no registry source found"
 	case errors.Is(err, bootstrap.ErrInvalidInput):
 		return "invalid input"
 	case errors.Is(err, context.DeadlineExceeded):
@@ -751,11 +752,11 @@ func (h *LookupHandler) handleError(c echo.Context, err error, queryType, _ stri
 			},
 		})
 	}
-	if errors.Is(err, bootstrap.ErrNotFound) {
+	if isNoSource(err) {
 		return c.JSON(http.StatusNotFound, ErrorResponse{
 			Error: ErrorDetail{
-				Code:    "NOT_FOUND",
-				Message: "No RDAP server found for " + queryType,
+				Code:    "NO_SOURCE",
+				Message: "No registry source found for " + queryType,
 			},
 		})
 	}
@@ -769,6 +770,10 @@ func (h *LookupHandler) handleError(c echo.Context, err error, queryType, _ stri
 	})
 }
 
+func isNoSource(err error) bool {
+	return errors.Is(err, bootstrap.ErrNotFound) || errors.Is(err, whois.ErrNoWHOISServer)
+}
+
 // sanitizeUpstreamError returns a safe error message for clients.
 func sanitizeUpstreamError(err error) string {
 	switch {
@@ -778,6 +783,8 @@ func sanitizeUpstreamError(err error) string {
 		return "Upstream server rate limited"
 	case errors.Is(err, rdap.ErrServerError):
 		return "Upstream server error"
+	case errors.Is(err, whois.ErrNoRegistrationData):
+		return "Upstream WHOIS answer holds no registration data"
 	default:
 		return "Failed to query upstream RDAP server"
 	}

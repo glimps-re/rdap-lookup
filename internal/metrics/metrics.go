@@ -268,7 +268,7 @@ func New() *Metrics {
 				Name: "rdap_lookup_outcomes_total",
 				Help: "Total number of RDAP lookup outcomes",
 			},
-			[]string{"type", "outcome"}, // outcome: success, not_found, error, timeout, rate_limited
+			[]string{"type", "outcome"}, // outcome: success, not_found, no_source, error, timeout, rate_limited
 		),
 		LookupSource: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
