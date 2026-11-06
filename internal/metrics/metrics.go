@@ -403,8 +403,7 @@ func (m *Metrics) Register() error {
 	// Register default Go runtime metrics
 	if err := prometheus.Register(collectors.NewGoCollector()); err != nil {
 		// Ignore if already registered
-		var alreadyRegistered prometheus.AlreadyRegisteredError
-		if !errors.As(err, &alreadyRegistered) {
+		if _, ok := errors.AsType[prometheus.AlreadyRegisteredError](err); !ok {
 			return err
 		}
 	}
@@ -478,8 +477,7 @@ func (m *Metrics) Register() error {
 	for _, c := range metricCollectors {
 		if err := prometheus.Register(c); err != nil {
 			// Ignore if already registered
-			var alreadyRegistered prometheus.AlreadyRegisteredError
-			if !errors.As(err, &alreadyRegistered) {
+			if _, ok := errors.AsType[prometheus.AlreadyRegisteredError](err); !ok {
 				return err
 			}
 		}

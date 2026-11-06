@@ -24,7 +24,7 @@ func newTestServer(t *testing.T, registerMetrics bool) *Server {
 			WriteTimeout:    30 * time.Second,
 			ShutdownTimeout: 30 * time.Second,
 			TrustProxy:      false,
-			BodyLimit:       "1MB",
+			BodyLimit:       1024 * 1024,
 		},
 		Log: config.LogConfig{
 			Level:  "debug",
@@ -268,7 +268,7 @@ func TestServer_TrustProxy(t *testing.T) {
 			WriteTimeout:    30 * time.Second,
 			ShutdownTimeout: 30 * time.Second,
 			TrustProxy:      true, // Enable trust proxy
-			BodyLimit:       "1MB",
+			BodyLimit:       1024 * 1024,
 		},
 		Log: config.LogConfig{
 			Level:  "debug",
@@ -313,7 +313,7 @@ func TestServer_WithLookupHandler(t *testing.T) {
 			WriteTimeout:    30 * time.Second,
 			ShutdownTimeout: 30 * time.Second,
 			TrustProxy:      false,
-			BodyLimit:       "1MB",
+			BodyLimit:       1024 * 1024,
 		},
 		Log: config.LogConfig{
 			Level:  "debug",
@@ -356,7 +356,7 @@ func TestServer_WithNonNilLookupHandler(t *testing.T) {
 			WriteTimeout:    30 * time.Second,
 			ShutdownTimeout: 30 * time.Second,
 			TrustProxy:      false,
-			BodyLimit:       "1MB",
+			BodyLimit:       1024 * 1024,
 		},
 		Log: config.LogConfig{
 			Level:  "debug",
@@ -442,7 +442,7 @@ func TestServer_RateLimitMiddlewareWithLogging_LimitsAPI(t *testing.T) {
 			WriteTimeout:    30 * time.Second,
 			ShutdownTimeout: 30 * time.Second,
 			TrustProxy:      false,
-			BodyLimit:       "1MB",
+			BodyLimit:       1024 * 1024,
 		},
 		RateLimit: config.RateLimitConfig{
 			Enabled: true,

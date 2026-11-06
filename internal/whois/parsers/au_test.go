@@ -87,7 +87,7 @@ Last Modified: 2024-01-15T10:30:00Z
 						Handle: "XYZ789",
 						Name:   "Technical Support",
 					},
-					DNSSECSigned: ptr(false),
+					DNSSECSigned: new(false),
 				},
 				Confidence: whois.ConfidenceHigh,
 				ParserName: "au",
@@ -173,7 +173,7 @@ Registry Expiry Date: 2025-05-20T00:00:00Z
 			want: &whois.ParseResult{
 				Domain: &whois.ParsedDomain{
 					DomainName:   "example.com.au",
-					DNSSECSigned: ptr(true),
+					DNSSECSigned: new(true),
 				},
 				Confidence: whois.ConfidenceHigh,
 				ParserName: "au",
@@ -187,7 +187,7 @@ Registry Expiry Date: 2025-05-20T00:00:00Z
 			want: &whois.ParseResult{
 				Domain: &whois.ParsedDomain{
 					DomainName:   "example.com.au",
-					DNSSECSigned: ptr(false),
+					DNSSECSigned: new(false),
 				},
 				Confidence: whois.ConfidenceHigh,
 				ParserName: "au",
@@ -201,7 +201,7 @@ Registry Expiry Date: 2025-05-20T00:00:00Z
 			want: &whois.ParseResult{
 				Domain: &whois.ParsedDomain{
 					DomainName:   "example.com.au",
-					DNSSECSigned: ptr(false),
+					DNSSECSigned: new(false),
 				},
 				Confidence: whois.ConfidenceHigh,
 				ParserName: "au",
@@ -215,7 +215,7 @@ Registry Expiry Date: 2025-05-20T00:00:00Z
 			want: &whois.ParseResult{
 				Domain: &whois.ParsedDomain{
 					DomainName:   "example.com.au",
-					DNSSECSigned: ptr(false),
+					DNSSECSigned: new(false),
 				},
 				Confidence: whois.ConfidenceHigh,
 				ParserName: "au",
@@ -309,7 +309,7 @@ DNSSEC: unsigned
 						Handle: "TECH456",
 						Name:   "Technical Support",
 					},
-					DNSSECSigned: ptr(false),
+					DNSSECSigned: new(false),
 				},
 				Confidence: whois.ConfidenceHigh,
 				ParserName: "au",

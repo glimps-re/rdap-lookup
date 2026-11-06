@@ -92,7 +92,7 @@ Please visit www.eurid.eu for more info.
 						Email:        "tech@example.eu",
 						Phone:        "+32.123456789",
 					},
-					DNSSECSigned: ptr(true),
+					DNSSECSigned: new(true),
 				},
 				Confidence: whois.ConfidenceHigh,
 				ParserName: "eu",

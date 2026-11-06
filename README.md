@@ -60,6 +60,7 @@ All configuration is via environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `RDAP_LISTEN_ADDR` | `:8080` | Server listen address |
+| `RDAP_BODY_LIMIT` | `1MB` | Maximum request body size (bytes, or binary `KB`/`MB`/`GB` suffix) |
 | `RDAP_CACHE_TTL` | `24h` | Cache TTL for positive responses |
 | `RDAP_CACHE_NEGATIVE_TTL` | `1h` | Cache TTL for not-found responses |
 | `RDAP_CACHE_RAM_MAX_SIZE` | `100MB` | L1 cache size limit |
@@ -236,7 +237,7 @@ This project uses the following third-party dependencies:
 
 | Package | License | Notes |
 |---------|---------|-------|
-| `github.com/labstack/echo/v4` | MIT | HTTP framework |
+| `github.com/labstack/echo/v5` | MIT | HTTP framework |
 | `github.com/prometheus/client_golang` | Apache-2.0 | Prometheus metrics |
 | `github.com/redis/go-redis/v9` | BSD-2-Clause | Redis client |
 | `github.com/hashicorp/golang-lru/v2` | MPL-2.0 | LRU cache implementation |

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/glimps-re/rdap-lookup/internal/bootstrap"
 	"github.com/glimps-re/rdap-lookup/internal/cache"
@@ -107,7 +107,7 @@ func NewLookupHandlerWithWHOIS(client *rdap.Client, bs *bootstrap.Service, c *ca
 // Using Server.WriteTimeout as the handler deadline ensures upstream I/O
 // (RDAP, WHOIS) is cancelled before the HTTP connection deadline elapses,
 // preventing goroutine leaks that can cause concurrent map-write panics.
-func (h *LookupHandler) deriveCtx(c echo.Context) (context.Context, context.CancelFunc) {
+func (h *LookupHandler) deriveCtx(c *echo.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(c.Request().Context(), h.handlerTimeout)
 }
 
@@ -173,7 +173,7 @@ func (h *LookupHandler) WHOISEnabled() bool {
 }
 
 // LookupDomain handles domain lookup requests.
-func (h *LookupHandler) LookupDomain(c echo.Context) error {
+func (h *LookupHandler) LookupDomain(c *echo.Context) error {
 	name := strings.ToLower(strings.TrimSpace(c.Param("name")))
 	if err := validate.ValidateDomain(name); err != nil {
 		return c.JSON(http.StatusBadRequest, ErrorResponse{
@@ -278,7 +278,7 @@ func (h *LookupHandler) fetchDomainViaWHOIS(ctx context.Context, name string) ([
 }
 
 // LookupIP handles IP lookup requests.
-func (h *LookupHandler) LookupIP(c echo.Context) error {
+func (h *LookupHandler) LookupIP(c *echo.Context) error {
 	addr := strings.TrimSpace(c.Param("addr"))
 	if err := validate.ValidateIP(addr); err != nil {
 		return c.JSON(http.StatusBadRequest, ErrorResponse{
@@ -324,7 +324,7 @@ func (h *LookupHandler) LookupIP(c echo.Context) error {
 }
 
 // LookupASN handles ASN lookup requests.
-func (h *LookupHandler) LookupASN(c echo.Context) error {
+func (h *LookupHandler) LookupASN(c *echo.Context) error {
 	asnStr := strings.TrimSpace(c.Param("asn"))
 	if asnStr == "" {
 		return c.JSON(http.StatusBadRequest, ErrorResponse{
@@ -385,7 +385,7 @@ func (h *LookupHandler) LookupASN(c echo.Context) error {
 }
 
 // LookupEntity handles entity lookup requests.
-func (h *LookupHandler) LookupEntity(c echo.Context) error {
+func (h *LookupHandler) LookupEntity(c *echo.Context) error {
 	handle := strings.TrimSpace(c.Param("handle"))
 	if handle == "" {
 		return c.JSON(http.StatusBadRequest, ErrorResponse{
@@ -478,7 +478,7 @@ type BatchStats struct {
 }
 
 // LookupBatch handles batch lookup requests.
-func (h *LookupHandler) LookupBatch(c echo.Context) error {
+func (h *LookupHandler) LookupBatch(c *echo.Context) error {
 	var req BatchRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, ErrorResponse{
@@ -727,7 +727,7 @@ func (h *LookupHandler) lookupEntityData(ctx context.Context, handle, serverURL 
 	}, rdap.ErrNotFound)
 }
 
-func (h *LookupHandler) handleError(c echo.Context, err error, queryType, _ string) error {
+func (h *LookupHandler) handleError(c *echo.Context, err error, queryType, _ string) error {
 	if errors.Is(err, rdap.ErrNotFound) {
 		return c.JSON(http.StatusNotFound, ErrorResponse{
 			Error: ErrorDetail{
@@ -790,7 +790,7 @@ func sanitizeUpstreamError(err error) string {
 	}
 }
 
-func (h *LookupHandler) respondWithData(c echo.Context, data []byte, cached bool) error {
+func (h *LookupHandler) respondWithData(c *echo.Context, data []byte, cached bool) error {
 	if cached {
 		c.Response().Header().Set("X-Cache", "HIT")
 	} else {

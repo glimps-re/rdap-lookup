@@ -366,10 +366,6 @@ func TestParseResult_Err(t *testing.T) {
 	}
 }
 
-func ptr[T any](v T) *T {
-	return &v
-}
-
 func utc(year int, month time.Month, day, hour, minute, second int) *time.Time {
-	return ptr(time.Date(year, month, day, hour, minute, second, 0, time.UTC))
+	return new(time.Date(year, month, day, hour, minute, second, 0, time.UTC))
 }

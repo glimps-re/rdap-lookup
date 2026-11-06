@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/glimps-re/rdap-lookup/internal/metrics"
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"golang.org/x/time/rate"
 )
 
@@ -250,7 +250,7 @@ func (rl *IPRateLimiter) Stop() {
 // RateLimitMiddleware returns Echo middleware for rate limiting.
 func (rl *IPRateLimiter) RateLimitMiddleware() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			ip := c.RealIP()
 			limiter := rl.getLimiter(ip)
 

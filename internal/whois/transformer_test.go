@@ -32,7 +32,7 @@ func TestTransformToSimpleDomain(t *testing.T) {
 					CreatedDate:    utc(2000, 1, 15, 0, 0, 0),
 					UpdatedDate:    utc(2024, 6, 15, 10, 30, 0),
 					ExpirationDate: utc(2025, 1, 15, 0, 0, 0),
-					DNSSECSigned:   ptr(true),
+					DNSSECSigned:   new(true),
 					WHOISServer:    "whois.denic.de",
 				},
 				Confidence: ConfidenceHigh,

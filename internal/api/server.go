@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/labstack/echo-contrib/echoprometheus"
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
+	"github.com/labstack/echo-contrib/v5/echoprometheus"
+	"github.com/labstack/echo/v5"
+	"github.com/labstack/echo/v5/middleware"
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/glimps-re/rdap-lookup/internal/config"
@@ -29,6 +29,7 @@ var operationalEndpoints = map[string]bool{
 // Server represents the HTTP server.
 type Server struct {
 	echo          *echo.Echo
+	httpServer    *http.Server
 	cfg           *config.Config
 	logger        *slog.Logger
 	healthChecker *HealthChecker
@@ -46,11 +47,15 @@ type ServerDeps struct {
 // NewServer creates a new HTTP server.
 func NewServer(cfg *config.Config, logger *slog.Logger, m *metrics.Metrics, buildInfo BuildInfo, deps *ServerDeps) *Server {
 	e := echo.New()
-	e.HideBanner = true
-	e.HidePort = true
 
 	s := &Server{
-		echo:          e,
+		echo: e,
+		httpServer: &http.Server{
+			Addr:         cfg.Server.ListenAddr,
+			Handler:      e,
+			ReadTimeout:  cfg.Server.ReadTimeout,
+			WriteTimeout: cfg.Server.WriteTimeout,
+		},
 		cfg:           cfg,
 		logger:        logger,
 		healthChecker: NewHealthChecker(),
@@ -114,7 +119,7 @@ func (s *Server) setupMiddleware() {
 // rateLimitMiddlewareWithLogging wraps rate limiting with security event logging.
 func (s *Server) rateLimitMiddlewareWithLogging() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			// Skip rate limiting for operational endpoints
 			path := c.Request().URL.Path
 			if operationalEndpoints[path] {
@@ -169,20 +174,20 @@ func (s *Server) setupRoutes() {
 // loggingMiddleware returns a middleware that logs requests using slog.
 func (s *Server) loggingMiddleware() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
+		return func(c *echo.Context) error {
 			start := time.Now()
 			req := c.Request()
-			res := c.Response()
 
 			// Get request ID
 			requestID := c.Response().Header().Get(echo.HeaderXRequestID)
 
 			err := next(c)
 			if err != nil {
-				c.Error(err)
+				c.Echo().HTTPErrorHandler(c, err)
 			}
 
 			duration := time.Since(start)
+			res, status := echo.ResolveResponseStatus(c.Response(), err)
 
 			// Skip logging for operational endpoints at info level
 			path := req.URL.Path
@@ -191,7 +196,7 @@ func (s *Server) loggingMiddleware() echo.MiddlewareFunc {
 					slog.String("request_id", requestID),
 					slog.String("method", req.Method),
 					slog.String("path", path),
-					slog.Int("status", res.Status),
+					slog.Int("status", status),
 					slog.Duration("duration", duration),
 				)
 				return nil
@@ -202,7 +207,7 @@ func (s *Server) loggingMiddleware() echo.MiddlewareFunc {
 				slog.String("method", req.Method),
 				slog.String("path", path),
 				slog.String("remote_addr", req.RemoteAddr),
-				slog.Int("status", res.Status),
+				slog.Int("status", status),
 				slog.Int64("bytes", res.Size),
 				slog.Duration("duration", duration),
 			)
@@ -218,14 +223,14 @@ func (s *Server) prometheusMiddleware() echo.MiddlewareFunc {
 		Subsystem: "rdap",
 
 		// Skip metrics endpoint from being counted in metrics
-		Skipper: func(c echo.Context) bool {
+		Skipper: func(c *echo.Context) bool {
 			return c.Path() == "/metrics"
 		},
 
 		// Use Echo's route path template for URL label (prevents high cardinality)
 		// This gives us "/domain/:name" instead of "/domain/example.com"
 		LabelFuncs: map[string]echoprometheus.LabelValueFunc{
-			"url": func(c echo.Context, err error) string {
+			"url": func(c *echo.Context, err error) string {
 				return c.Path()
 			},
 		},
@@ -239,12 +244,12 @@ func (s *Server) prometheusMiddleware() echo.MiddlewareFunc {
 		},
 
 		// Track in-flight requests using our custom metric
-		BeforeNext: func(c echo.Context) {
+		BeforeNext: func(c *echo.Context) {
 			if s.metrics != nil {
 				s.metrics.HTTPRequestsInFlight.Inc()
 			}
 		},
-		AfterNext: func(c echo.Context, err error) {
+		AfterNext: func(c *echo.Context, err error) {
 			if s.metrics != nil {
 				s.metrics.HTTPRequestsInFlight.Dec()
 			}
@@ -258,7 +263,7 @@ func (s *Server) prometheusMiddleware() echo.MiddlewareFunc {
 		// return a no-op middleware that just tracks in-flight requests
 		s.logger.Warn("failed to create prometheus middleware, using fallback", "error", err)
 		return func(next echo.HandlerFunc) echo.HandlerFunc {
-			return func(c echo.Context) error {
+			return func(c *echo.Context) error {
 				if s.metrics != nil {
 					s.metrics.HTTPRequestsInFlight.Inc()
 					defer s.metrics.HTTPRequestsInFlight.Dec()
@@ -276,16 +281,10 @@ func (s *Server) Start() error {
 		slog.String("addr", s.cfg.Server.ListenAddr),
 	)
 
-	server := &http.Server{
-		Addr:         s.cfg.Server.ListenAddr,
-		ReadTimeout:  s.cfg.Server.ReadTimeout,
-		WriteTimeout: s.cfg.Server.WriteTimeout,
-	}
-
 	// Mark as ready
 	s.healthChecker.SetReady(true)
 
-	return s.echo.StartServer(server)
+	return s.httpServer.ListenAndServe()
 }
 
 // Shutdown gracefully shuts down the server.
@@ -300,7 +299,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		s.rateLimiter.Stop()
 	}
 
-	return s.echo.Shutdown(ctx)
+	return s.httpServer.Shutdown(ctx)
 }
 
 // Echo returns the underlying echo instance for testing.

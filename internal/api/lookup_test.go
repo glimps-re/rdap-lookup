@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/glimps-re/rdap-lookup/internal/bootstrap"
@@ -133,8 +133,7 @@ func TestLookupHandler_DomainValidation(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/domain/", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
-	c.SetParamNames("name")
-	c.SetParamValues("")
+	c.SetPathValues(echo.PathValues{{Name: "name", Value: ""}})
 
 	// We can't fully test without dependencies, but we can test input validation
 	handler := &LookupHandler{}
@@ -163,8 +162,7 @@ func TestLookupHandler_IPValidation(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/ip/", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
-	c.SetParamNames("addr")
-	c.SetParamValues("")
+	c.SetPathValues(echo.PathValues{{Name: "addr", Value: ""}})
 
 	handler := &LookupHandler{}
 	err := handler.LookupIP(c)
@@ -214,8 +212,7 @@ func TestLookupHandler_ASNValidation(t *testing.T) {
 			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/asn/"+tt.asn, nil)
 			rec := httptest.NewRecorder()
 			c := e.NewContext(req, rec)
-			c.SetParamNames("asn")
-			c.SetParamValues(tt.asn)
+			c.SetPathValues(echo.PathValues{{Name: "asn", Value: tt.asn}})
 
 			handler := &LookupHandler{}
 			err := handler.LookupASN(c)
@@ -279,8 +276,7 @@ func TestLookupHandler_EntityValidation(t *testing.T) {
 			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 			rec := httptest.NewRecorder()
 			c := e.NewContext(req, rec)
-			c.SetParamNames("handle")
-			c.SetParamValues(tt.handle)
+			c.SetPathValues(echo.PathValues{{Name: "handle", Value: tt.handle}})
 
 			handler := &LookupHandler{}
 			err := handler.LookupEntity(c)
@@ -734,8 +730,7 @@ func TestLookupHandler_EntityServerValidation(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/entity/ABC-123?server=https://evil.com", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
-	c.SetParamNames("handle")
-	c.SetParamValues("ABC-123")
+	c.SetPathValues(echo.PathValues{{Name: "handle", Value: "ABC-123"}})
 
 	err := handler.LookupEntity(c)
 	if err != nil {
@@ -783,8 +778,7 @@ func TestLookupHandler_ASNWithASPrefix(t *testing.T) {
 			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/asn/"+tt.asn, nil)
 			rec := httptest.NewRecorder()
 			c := e.NewContext(req, rec)
-			c.SetParamNames("asn")
-			c.SetParamValues(tt.asn)
+			c.SetPathValues(echo.PathValues{{Name: "asn", Value: tt.asn}})
 
 			// Handler with nil cache will panic - just testing that validation passed
 			handler := &LookupHandler{}
@@ -819,8 +813,7 @@ func TestLookupHandler_InvalidIPAddress(t *testing.T) {
 			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/ip/"+tt.addr, nil)
 			rec := httptest.NewRecorder()
 			c := e.NewContext(req, rec)
-			c.SetParamNames("addr")
-			c.SetParamValues(tt.addr)
+			c.SetPathValues(echo.PathValues{{Name: "addr", Value: tt.addr}})
 
 			handler := &LookupHandler{}
 			err := handler.LookupIP(c)
@@ -852,8 +845,7 @@ func TestLookupHandler_InvalidDomainName(t *testing.T) {
 			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/domain/test", nil)
 			rec := httptest.NewRecorder()
 			c := e.NewContext(req, rec)
-			c.SetParamNames("name")
-			c.SetParamValues(tt.domain) // Set the actual test value here
+			c.SetPathValues(echo.PathValues{{Name: "name", Value: tt.domain}})
 
 			handler := &LookupHandler{}
 			err := handler.LookupDomain(c)
@@ -1022,8 +1014,7 @@ func TestLookupHandler_ValidDomain(t *testing.T) {
 			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/domain/"+tt.domain, nil)
 			rec := httptest.NewRecorder()
 			c := e.NewContext(req, rec)
-			c.SetParamNames("name")
-			c.SetParamValues(tt.domain)
+			c.SetPathValues(echo.PathValues{{Name: "name", Value: tt.domain}})
 
 			handler := &LookupHandler{}
 
@@ -1059,8 +1050,7 @@ func TestLookupHandler_ValidIP(t *testing.T) {
 			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/ip/"+tt.addr, nil)
 			rec := httptest.NewRecorder()
 			c := e.NewContext(req, rec)
-			c.SetParamNames("addr")
-			c.SetParamValues(tt.addr)
+			c.SetPathValues(echo.PathValues{{Name: "addr", Value: tt.addr}})
 
 			handler := &LookupHandler{}
 
@@ -1094,8 +1084,7 @@ func TestLookupHandler_ValidASN(t *testing.T) {
 			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/asn/"+tt.asn, nil)
 			rec := httptest.NewRecorder()
 			c := e.NewContext(req, rec)
-			c.SetParamNames("asn")
-			c.SetParamValues(tt.asn)
+			c.SetPathValues(echo.PathValues{{Name: "asn", Value: tt.asn}})
 
 			handler := &LookupHandler{}
 
@@ -1122,8 +1111,7 @@ func TestLookupHandler_EntityWithAllowedServer(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/entity/ABC-123?server=https://rdap.arin.net/registry/", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
-	c.SetParamNames("handle")
-	c.SetParamValues("ABC-123")
+	c.SetPathValues(echo.PathValues{{Name: "handle", Value: "ABC-123"}})
 
 	// This will panic at cache lookup since handler isn't fully initialized,
 	// but validates server validation passed
@@ -1466,8 +1454,7 @@ func TestLookupHandler_Entity_InvalidServerURLFormat(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/entity/ABC-123?server=not-a-valid-url", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
-	c.SetParamNames("handle")
-	c.SetParamValues("ABC-123")
+	c.SetPathValues(echo.PathValues{{Name: "handle", Value: "ABC-123"}})
 
 	err := handler.LookupEntity(c)
 	if err != nil {
@@ -1500,8 +1487,7 @@ func TestLookupHandler_Entity_ServerNotInAllowlist(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/entity/ABC-123?server=https://rdap.ripe.net/", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
-	c.SetParamNames("handle")
-	c.SetParamValues("ABC-123")
+	c.SetPathValues(echo.PathValues{{Name: "handle", Value: "ABC-123"}})
 
 	err := handler.LookupEntity(c)
 	if err != nil {
@@ -1529,8 +1515,7 @@ func TestLookupHandler_ASN_OverflowValue(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/asn/4294967296", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
-	c.SetParamNames("asn")
-	c.SetParamValues("4294967296")
+	c.SetPathValues(echo.PathValues{{Name: "asn", Value: "4294967296"}})
 
 	handler := &LookupHandler{}
 
@@ -1551,8 +1536,7 @@ func TestLookupHandler_ASN_NegativeValue(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/asn/-1", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
-	c.SetParamNames("asn")
-	c.SetParamValues("-1")
+	c.SetPathValues(echo.PathValues{{Name: "asn", Value: "-1"}})
 
 	handler := &LookupHandler{}
 
@@ -1834,8 +1818,7 @@ func TestLookupDomain_HandlerTimeoutCancelsFetch(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/domain/"+domainName, nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
-	c.SetParamNames("name")
-	c.SetParamValues(domainName)
+	c.SetPathValues(echo.PathValues{{Name: "name", Value: domainName}})
 
 	start := time.Now()
 	_ = h.LookupDomain(c)
@@ -1890,8 +1873,7 @@ func TestLookupIP_HandlerTimeoutCancelsFetch(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/ip/"+ipAddr, nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
-	c.SetParamNames("addr")
-	c.SetParamValues(ipAddr)
+	c.SetPathValues(echo.PathValues{{Name: "addr", Value: ipAddr}})
 
 	start := time.Now()
 	_ = h.LookupIP(c)
@@ -1941,8 +1923,7 @@ func TestLookupASN_HandlerTimeoutCancelsFetch(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/asn/"+asnStr, nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
-	c.SetParamNames("asn")
-	c.SetParamValues(asnStr)
+	c.SetPathValues(echo.PathValues{{Name: "asn", Value: asnStr}})
 
 	start := time.Now()
 	_ = h.LookupASN(c)
@@ -1995,8 +1976,7 @@ func TestLookupEntity_HandlerTimeoutCancelsFetch(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/entity/"+handle+"?server="+serverURL, nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
-	c.SetParamNames("handle")
-	c.SetParamValues(handle)
+	c.SetPathValues(echo.PathValues{{Name: "handle", Value: handle}})
 
 	start := time.Now()
 	_ = h.LookupEntity(c)

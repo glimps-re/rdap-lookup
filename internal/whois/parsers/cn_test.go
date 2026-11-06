@@ -82,7 +82,7 @@ DNSSEC: unsigned
 						Name:   "Example Company Ltd.",
 						Email:  "admin@example.cn",
 					},
-					DNSSECSigned: ptr(false),
+					DNSSECSigned: new(false),
 				},
 				Confidence: whois.ConfidenceHigh,
 				ParserName: "cn",
@@ -134,7 +134,7 @@ DNSSEC: unsigned
 			want: &whois.ParseResult{
 				Domain: &whois.ParsedDomain{
 					DomainName:   "example.cn",
-					DNSSECSigned: ptr(true),
+					DNSSECSigned: new(true),
 				},
 				Confidence: whois.ConfidenceHigh,
 				ParserName: "cn",
@@ -148,7 +148,7 @@ DNSSEC: unsigned
 			want: &whois.ParseResult{
 				Domain: &whois.ParsedDomain{
 					DomainName:   "example.cn",
-					DNSSECSigned: ptr(false),
+					DNSSECSigned: new(false),
 				},
 				Confidence: whois.ConfidenceHigh,
 				ParserName: "cn",
@@ -162,7 +162,7 @@ DNSSEC: unsigned
 			want: &whois.ParseResult{
 				Domain: &whois.ParsedDomain{
 					DomainName:   "example.cn",
-					DNSSECSigned: ptr(false),
+					DNSSECSigned: new(false),
 				},
 				Confidence: whois.ConfidenceHigh,
 				ParserName: "cn",
@@ -232,7 +232,7 @@ DNSSEC: unsigned
 						Name:   "Beijing Baidu Netcom Science Technology Co., Ltd.",
 						Email:  "domainname@baidu.com",
 					},
-					DNSSECSigned: ptr(false),
+					DNSSECSigned: new(false),
 				},
 				Confidence: whois.ConfidenceHigh,
 				ParserName: "cn",

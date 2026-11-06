@@ -142,7 +142,7 @@ p. [ネームサーバ]               ns2.example.jp
 			want: &whois.ParseResult{
 				Domain: &whois.ParsedDomain{
 					DomainName:   "example.jp",
-					DNSSECSigned: ptr(true),
+					DNSSECSigned: new(true),
 				},
 				Confidence: whois.ConfidenceHigh,
 				ParserName: "jp",

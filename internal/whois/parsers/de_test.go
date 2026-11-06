@@ -169,7 +169,7 @@ Email: tech@provider.de
 			want: &whois.ParseResult{
 				Domain: &whois.ParsedDomain{
 					DomainName:   "example.de",
-					DNSSECSigned: ptr(true),
+					DNSSECSigned: new(true),
 				},
 				Confidence: whois.ConfidenceHigh,
 				ParserName: "de",
@@ -183,7 +183,7 @@ Email: tech@provider.de
 			want: &whois.ParseResult{
 				Domain: &whois.ParsedDomain{
 					DomainName:   "example.de",
-					DNSSECSigned: ptr(true),
+					DNSSECSigned: new(true),
 				},
 				Confidence: whois.ConfidenceHigh,
 				ParserName: "de",
@@ -197,7 +197,7 @@ Email: tech@provider.de
 			want: &whois.ParseResult{
 				Domain: &whois.ParsedDomain{
 					DomainName:   "example.de",
-					DNSSECSigned: ptr(false),
+					DNSSECSigned: new(false),
 				},
 				Confidence: whois.ConfidenceHigh,
 				ParserName: "de",
@@ -211,7 +211,7 @@ Email: tech@provider.de
 			want: &whois.ParseResult{
 				Domain: &whois.ParsedDomain{
 					DomainName:   "example.de",
-					DNSSECSigned: ptr(false),
+					DNSSECSigned: new(false),
 				},
 				Confidence: whois.ConfidenceHigh,
 				ParserName: "de",

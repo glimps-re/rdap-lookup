@@ -63,8 +63,7 @@ func (e *APIError) IsServerError() bool {
 
 // IsNotFoundError checks if an error is a not found error.
 func IsNotFoundError(err error) bool {
-	var apiErr *APIError
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := errors.AsType[*APIError](err); ok {
 		return apiErr.IsNotFound()
 	}
 	return errors.Is(err, ErrNotFound)
@@ -72,8 +71,7 @@ func IsNotFoundError(err error) bool {
 
 // IsRateLimitedError checks if an error is a rate limit error.
 func IsRateLimitedError(err error) bool {
-	var apiErr *APIError
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := errors.AsType[*APIError](err); ok {
 		return apiErr.IsRateLimited()
 	}
 	return errors.Is(err, ErrRateLimited)
@@ -81,8 +79,7 @@ func IsRateLimitedError(err error) bool {
 
 // IsServerErrorFunc checks if an error is a server error.
 func IsServerErrorFunc(err error) bool {
-	var apiErr *APIError
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := errors.AsType[*APIError](err); ok {
 		return apiErr.IsServerError()
 	}
 	return false
