@@ -391,7 +391,7 @@ func TestDefaultTieredCacheConfig(t *testing.T) {
 }
 
 // setupTieredWithL2 creates a tiered cache with miniredis as L2.
-func setupTieredWithL2(t *testing.T) (*TieredCache, *miniredis.Miniredis) {
+func setupTieredWithL2(t *testing.T) *TieredCache {
 	t.Helper()
 
 	mr, err := miniredis.Run()
@@ -429,11 +429,11 @@ func setupTieredWithL2(t *testing.T) (*TieredCache, *miniredis.Miniredis) {
 		mr.Close()
 	})
 
-	return tc, mr
+	return tc
 }
 
 func TestTieredCache_WithL2_SetAndGet(t *testing.T) {
-	tc, _ := setupTieredWithL2(t)
+	tc := setupTieredWithL2(t)
 
 	ctx := context.Background()
 	key := "test:key"
@@ -457,7 +457,7 @@ func TestTieredCache_WithL2_SetAndGet(t *testing.T) {
 }
 
 func TestTieredCache_WithL2_L2Promotion(t *testing.T) {
-	tc, _ := setupTieredWithL2(t)
+	tc := setupTieredWithL2(t)
 
 	ctx := context.Background()
 	key := "test:promote"
@@ -494,7 +494,7 @@ func TestTieredCache_WithL2_L2Promotion(t *testing.T) {
 }
 
 func TestTieredCache_WithL2_Stats(t *testing.T) {
-	tc, _ := setupTieredWithL2(t)
+	tc := setupTieredWithL2(t)
 
 	ctx := context.Background()
 
@@ -522,7 +522,7 @@ func TestTieredCache_WithL2_Stats(t *testing.T) {
 }
 
 func TestTieredCache_WithL2_Delete(t *testing.T) {
-	tc, _ := setupTieredWithL2(t)
+	tc := setupTieredWithL2(t)
 
 	ctx := context.Background()
 	key := "test:delete"
@@ -550,7 +550,7 @@ func TestTieredCache_WithL2_Delete(t *testing.T) {
 }
 
 func TestTieredCache_WithL2_Clear(t *testing.T) {
-	tc, _ := setupTieredWithL2(t)
+	tc := setupTieredWithL2(t)
 
 	ctx := context.Background()
 

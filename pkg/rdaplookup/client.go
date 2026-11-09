@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -208,9 +209,13 @@ func (c *Client) Close() error {
 }
 
 func (c *Client) doRequest(ctx context.Context, method, path string, body, result any) error {
-	var bodyReader io.Reader
+	var (
+		bodyReader io.Reader
+		data       []byte
+	)
 	if body != nil {
-		data, err := json.Marshal(body)
+		var err error
+		data, err = json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("failed to marshal request body: %w", err)
 		}
@@ -244,7 +249,6 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body, resul
 
 		// Reset body reader for retry
 		if body != nil {
-			data, _ := json.Marshal(body)
 			bodyReader = bytes.NewReader(data)
 		}
 	}
@@ -272,7 +276,11 @@ func (c *Client) doSingleRequest(ctx context.Context, method, path string, body 
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Debug("failed to close response body", slog.String("error", err.Error()))
+		}
+	}()
 
 	// Limit response size
 	limitedReader := io.LimitReader(resp.Body, c.maxResponseSize)

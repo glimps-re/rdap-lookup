@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"strings"
 	"sync"
@@ -188,7 +189,9 @@ func (d *Discovery) queryIANA(ctx context.Context, tld string) (string, error) {
 		return "", &WHOISError{Op: "dial", Server: IANAWHOISServer, Err: err}
 	}
 	defer func() {
-		_ = conn.Close()
+		if err := conn.Close(); err != nil {
+			slog.Debug("failed to close WHOIS connection", slog.String("error", err.Error()))
+		}
 	}()
 
 	// Set read/write deadline

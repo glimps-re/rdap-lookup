@@ -155,7 +155,11 @@ func (a *Analyzer) Run(ctx context.Context) (*AnalysisReport, error) {
 	if err != nil {
 		return report, err
 	}
-	defer func() { _ = client.Close() }()
+	defer func() {
+		if err := client.Close(); err != nil {
+			a.logger.Warn("failed to close RDAP client", "error", err)
+		}
+	}()
 	a.rdapClient = client
 
 	report.BootstrapDuration = time.Since(bootstrapStart)
@@ -298,8 +302,7 @@ func (a *Analyzer) lookupIPs(ctx context.Context, entries []PhishingEntry) []IPL
 		if entry.IP != "" && !strings.HasPrefix(entry.IP, "0.") {
 			if _, exists := ips[entry.IP]; !exists {
 				// Extract domain from URL
-				parsed, _ := url.Parse(entry.URL)
-				if parsed != nil {
+				if parsed, err := url.Parse(entry.URL); err == nil {
 					ips[entry.IP] = parsed.Hostname()
 				}
 			}

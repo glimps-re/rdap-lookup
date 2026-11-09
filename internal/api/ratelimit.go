@@ -1,4 +1,3 @@
-// Package api provides HTTP handlers and middleware for the RDAP lookup service.
 package api
 
 import (

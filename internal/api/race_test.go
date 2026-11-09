@@ -11,6 +11,7 @@
 // the header-write code path (respondWithData sets X-Cache: HIT) from many
 // concurrent goroutines. The -race detector validates no data race occurs on
 // the response-header maps.
+
 package api
 
 import (

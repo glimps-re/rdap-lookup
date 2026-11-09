@@ -9,6 +9,7 @@
 //     so DialContext blocks until the context deadline fires.
 //
 // Both paths must resolve promptly when the context is cancelled.
+
 package whois
 
 import (

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -42,7 +43,10 @@ func NewMetaHandler(info BuildInfo) *MetaHandler {
 func (h *MetaHandler) Handle(c *echo.Context) error {
 	uptime := time.Since(h.startTime)
 
-	hostname, _ := os.Hostname()
+	hostname, err := os.Hostname()
+	if err != nil {
+		slog.Debug("failed to resolve hostname", slog.String("error", err.Error()))
+	}
 
 	resp := MetaResponse{
 		Service:   "rdap-lookup",

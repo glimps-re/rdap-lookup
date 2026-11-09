@@ -1754,14 +1754,21 @@ func TestLookupHandler_Close(t *testing.T) {
 	}
 }
 
+// Deadlines of newBlockingHandlerWithCache: FetchTimeout > handlerTimeout, so
+// singleflight exits shortly after the handler gives up.
+const (
+	blockingHandlerTimeout = 100 * time.Millisecond
+	blockingFetchTimeout   = 150 * time.Millisecond
+)
+
 // newBlockingHandlerWithCache creates a LookupHandler with a real TieredCache
 // whose FetchTimeout equals handlerTimeout + grace, and returns the cache.
 // The handler has nil client/bootstrap so callers must NOT trigger fetchDomainData
 // directly; use the cache's GetOrFetchWithNegative to inject blocking fetches.
-func newBlockingHandlerWithCache(t *testing.T, handlerTimeout, fetchTimeout time.Duration) (*LookupHandler, *cache.TieredCache) {
+func newBlockingHandlerWithCache(t *testing.T) (*LookupHandler, *cache.TieredCache) {
 	t.Helper()
 	cfg := cache.DefaultTieredCacheConfig()
-	cfg.FetchTimeout = fetchTimeout
+	cfg.FetchTimeout = blockingFetchTimeout
 	tc, err := cache.NewTieredCache(cfg)
 	if err != nil {
 		t.Fatalf("NewTieredCache: %v", err)
@@ -1773,7 +1780,7 @@ func newBlockingHandlerWithCache(t *testing.T, handlerTimeout, fetchTimeout time
 		cache:           tc,
 		serverValidator: validate.NewRDAPServerValidator(nil),
 		batchConfig:     batchCfg,
-		handlerTimeout:  handlerTimeout,
+		handlerTimeout:  blockingHandlerTimeout,
 	}
 	return h, tc
 }
@@ -1782,10 +1789,10 @@ func newBlockingHandlerWithCache(t *testing.T, handlerTimeout, fetchTimeout time
 // fetch is cancelled when the per-handler deadline elapses. The handler must
 // return promptly (within deadline + 500ms) and the fetch goroutine must exit.
 func TestLookupDomain_HandlerTimeoutCancelsFetch(t *testing.T) {
-	const handlerTimeout = 100 * time.Millisecond
-	const fetchTimeout = 150 * time.Millisecond // FetchTimeout > handlerTimeout; singleflight exits shortly after
+	const handlerTimeout = blockingHandlerTimeout
+	const fetchTimeout = blockingFetchTimeout
 
-	h, tc := newBlockingHandlerWithCache(t, handlerTimeout, fetchTimeout)
+	h, tc := newBlockingHandlerWithCache(t)
 
 	fetchExited := make(chan struct{})
 	fetchStarted := make(chan struct{})
@@ -1840,10 +1847,10 @@ func TestLookupDomain_HandlerTimeoutCancelsFetch(t *testing.T) {
 // TestLookupIP_HandlerTimeoutCancelsFetch verifies that a blocking upstream
 // IP fetch is cancelled when the per-handler deadline elapses.
 func TestLookupIP_HandlerTimeoutCancelsFetch(t *testing.T) {
-	const handlerTimeout = 100 * time.Millisecond
-	const fetchTimeout = 150 * time.Millisecond
+	const handlerTimeout = blockingHandlerTimeout
+	const fetchTimeout = blockingFetchTimeout
 
-	h, tc := newBlockingHandlerWithCache(t, handlerTimeout, fetchTimeout)
+	h, tc := newBlockingHandlerWithCache(t)
 
 	fetchExited := make(chan struct{})
 	fetchStarted := make(chan struct{})
@@ -1893,10 +1900,10 @@ func TestLookupIP_HandlerTimeoutCancelsFetch(t *testing.T) {
 // TestLookupASN_HandlerTimeoutCancelsFetch verifies that a blocking upstream
 // ASN fetch is cancelled when the per-handler deadline elapses.
 func TestLookupASN_HandlerTimeoutCancelsFetch(t *testing.T) {
-	const handlerTimeout = 100 * time.Millisecond
-	const fetchTimeout = 150 * time.Millisecond
+	const handlerTimeout = blockingHandlerTimeout
+	const fetchTimeout = blockingFetchTimeout
 
-	h, tc := newBlockingHandlerWithCache(t, handlerTimeout, fetchTimeout)
+	h, tc := newBlockingHandlerWithCache(t)
 
 	fetchExited := make(chan struct{})
 	fetchStarted := make(chan struct{})
@@ -1943,10 +1950,10 @@ func TestLookupASN_HandlerTimeoutCancelsFetch(t *testing.T) {
 // TestLookupEntity_HandlerTimeoutCancelsFetch verifies that a blocking upstream
 // entity fetch is cancelled when the per-handler deadline elapses.
 func TestLookupEntity_HandlerTimeoutCancelsFetch(t *testing.T) {
-	const handlerTimeout = 100 * time.Millisecond
-	const fetchTimeout = 150 * time.Millisecond
+	const handlerTimeout = blockingHandlerTimeout
+	const fetchTimeout = blockingFetchTimeout
 
-	h, tc := newBlockingHandlerWithCache(t, handlerTimeout, fetchTimeout)
+	h, tc := newBlockingHandlerWithCache(t)
 	// Allow the test server URL in the validator.
 	h.serverValidator = validate.NewRDAPServerValidator([]string{"https://rdap.arin.net/registry/"})
 

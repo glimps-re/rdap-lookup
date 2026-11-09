@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"strings"
 	"sync"
@@ -217,7 +218,9 @@ func (c *Client) doQueryAddr(ctx context.Context, domain, server, addr string) (
 		return "", &WHOISError{Op: "dial", Server: server, Err: err}
 	}
 	defer func() {
-		_ = conn.Close()
+		if err := conn.Close(); err != nil {
+			slog.Debug("failed to close WHOIS connection", slog.String("error", err.Error()))
+		}
 	}()
 
 	// Set deadline from context
