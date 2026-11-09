@@ -201,6 +201,26 @@ func TestLoad_ValidationErrors(t *testing.T) {
 			envVars: map[string]string{"RDAP_CACHE_REDIS_ENABLED": "true"},
 			wantErr: "redis address required",
 		},
+		{
+			name:    "negative body limit",
+			envVars: map[string]string{"RDAP_BODY_LIMIT": "-1"},
+			wantErr: "body limit cannot be negative",
+		},
+		{
+			name:    "body limit short suffix",
+			envVars: map[string]string{"RDAP_BODY_LIMIT": "2M"},
+			wantErr: "invalid RDAP_BODY_LIMIT",
+		},
+		{
+			name:    "ram max size short suffix",
+			envVars: map[string]string{"RDAP_CACHE_RAM_MAX_SIZE": "2M"},
+			wantErr: "invalid RDAP_CACHE_RAM_MAX_SIZE",
+		},
+		{
+			name:    "whois max response size short suffix",
+			envVars: map[string]string{"RDAP_WHOIS_MAX_RESPONSE_SIZE": "2M"},
+			wantErr: "invalid RDAP_WHOIS_MAX_RESPONSE_SIZE",
+		},
 	}
 
 	for _, tt := range tests {
@@ -232,15 +252,66 @@ func TestGetSizeEnv(t *testing.T) {
 		value    string
 		defValue int64
 		want     int64
+		wantErr  bool
 	}{
-		{"empty", "", 100, 100},
-		{"plain number", "1024", 0, 1024},
-		{"bytes", "1024B", 0, 1024},
-		{"kilobytes", "10KB", 0, 10 * 1024},
-		{"megabytes", "100MB", 0, 100 * 1024 * 1024},
-		{"gigabytes", "2GB", 0, 2 * 1024 * 1024 * 1024},
-		{"lowercase mb", "50mb", 0, 50 * 1024 * 1024},
-		{"invalid", "invalid", 999, 999},
+		{
+			name:     "empty",
+			defValue: 100,
+			want:     100,
+		},
+		{
+			name:  "plain number",
+			value: "1024",
+			want:  1024,
+		},
+		{
+			name:  "bytes",
+			value: "1024B",
+			want:  1024,
+		},
+		{
+			name:  "kilobytes",
+			value: "10KB",
+			want:  10 * 1024,
+		},
+		{
+			name:  "megabytes",
+			value: "100MB",
+			want:  100 * 1024 * 1024,
+		},
+		{
+			name:  "two megabytes",
+			value: "2MB",
+			want:  2 * 1024 * 1024,
+		},
+		{
+			name:  "gigabytes",
+			value: "2GB",
+			want:  2 * 1024 * 1024 * 1024,
+		},
+		{
+			name:  "lowercase mb",
+			value: "50mb",
+			want:  50 * 1024 * 1024,
+		},
+		{
+			name:     "invalid",
+			value:    "invalid",
+			defValue: 999,
+			wantErr:  true,
+		},
+		{
+			name:     "short suffix",
+			value:    "2M",
+			defValue: 999,
+			wantErr:  true,
+		},
+		{
+			name:     "non numeric with suffix",
+			value:    "xMB",
+			defValue: 999,
+			wantErr:  true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -248,7 +319,10 @@ func TestGetSizeEnv(t *testing.T) {
 			envKey := "TEST_SIZE_ENV_" + tt.name
 			t.Setenv(envKey, tt.value)
 
-			got := getSizeEnv(envKey, tt.defValue)
+			got, err := getSizeEnv(envKey, tt.defValue)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("getSizeEnv() error = %v, wantErr %v", err, tt.wantErr)
+			}
 			if got != tt.want {
 				t.Errorf("getSizeEnv() = %v, want %v", got, tt.want)
 			}

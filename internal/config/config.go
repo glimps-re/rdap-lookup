@@ -55,7 +55,7 @@ type ServerConfig struct {
 	// Set via RDAP_TRUST_PROXY environment variable.
 	TrustProxy bool
 	// BodyLimit is the maximum allowed request body size (default: 1MB).
-	BodyLimit string
+	BodyLimit int64
 }
 
 // CacheConfig holds cache configuration.
@@ -134,6 +134,19 @@ type BatchConfig struct {
 
 // Load loads configuration from environment variables.
 func Load() (*Config, error) {
+	bodyLimit, err := getSizeEnv("RDAP_BODY_LIMIT", 1024*1024)
+	if err != nil {
+		return nil, err
+	}
+	ramMaxSize, err := getSizeEnv("RDAP_CACHE_RAM_MAX_SIZE", 100*1024*1024) // 100MB
+	if err != nil {
+		return nil, err
+	}
+	whoisMaxResponseSize, err := getSizeEnv("RDAP_WHOIS_MAX_RESPONSE_SIZE", 64*1024) // 64KB
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
 		Server: ServerConfig{
 			ListenAddr:      getEnv("RDAP_LISTEN_ADDR", ":8080"),
@@ -141,14 +154,14 @@ func Load() (*Config, error) {
 			WriteTimeout:    getDurationEnv("RDAP_WRITE_TIMEOUT", 30*time.Second),
 			ShutdownTimeout: getDurationEnv("RDAP_SHUTDOWN_TIMEOUT", 30*time.Second),
 			TrustProxy:      getBoolEnv("RDAP_TRUST_PROXY", false),
-			BodyLimit:       getEnv("RDAP_BODY_LIMIT", "1MB"),
+			BodyLimit:       bodyLimit,
 		},
 		Cache: CacheConfig{
 			TTL:         getDurationEnv("RDAP_CACHE_TTL", 24*time.Hour),
 			NegativeTTL: getDurationEnv("RDAP_CACHE_NEGATIVE_TTL", 1*time.Hour),
 			RAM: RAMCacheConfig{
 				Enabled: getBoolEnv("RDAP_CACHE_RAM_ENABLED", true),
-				MaxSize: getSizeEnv("RDAP_CACHE_RAM_MAX_SIZE", 100*1024*1024), // 100MB
+				MaxSize: ramMaxSize,
 			},
 			Redis: RedisCacheConfig{
 				Enabled:  getBoolEnv("RDAP_CACHE_REDIS_ENABLED", false),
@@ -180,7 +193,7 @@ func Load() (*Config, error) {
 		WHOIS: WHOISConfig{
 			Enabled:         getBoolEnv("RDAP_WHOIS_ENABLED", false),
 			Timeout:         getDurationEnv("RDAP_WHOIS_TIMEOUT", 10*time.Second),
-			MaxResponseSize: getSizeEnv("RDAP_WHOIS_MAX_RESPONSE_SIZE", 64*1024), // 64KB
+			MaxResponseSize: whoisMaxResponseSize,
 		},
 	}
 
@@ -207,6 +220,10 @@ func (c *Config) Validate() error {
 
 	if c.Server.ShutdownTimeout <= 0 {
 		return errors.New("shutdown timeout must be positive")
+	}
+
+	if c.Server.BodyLimit < 0 {
+		return errors.New("body limit cannot be negative")
 	}
 
 	if c.Cache.TTL <= 0 {
@@ -328,17 +345,17 @@ func getDurationEnv(key string, defaultValue time.Duration) time.Duration {
 	return d
 }
 
-// getSizeEnv returns environment variable as size in bytes or default.
+// getSizeEnv returns environment variable as size in bytes or default, and an error when it is not a size.
 // Supports suffixes: B, KB, MB, GB (case insensitive).
-func getSizeEnv(key string, defaultValue int64) int64 {
+func getSizeEnv(key string, defaultValue int64) (int64, error) {
 	value := os.Getenv(key)
 	if value == "" {
-		return defaultValue
+		return defaultValue, nil
 	}
 
 	// Try parsing as plain number first
 	if size, err := strconv.ParseInt(value, 10, 64); err == nil {
-		return size
+		return size, nil
 	}
 
 	// Parse with suffix
@@ -359,13 +376,13 @@ func getSizeEnv(key string, defaultValue int64) int64 {
 	case len(value) >= 1 && (upperValue[len(value)-1:] == "B" || upperValue[len(value)-1:] == "b"):
 		numStr = value[:len(value)-1]
 	default:
-		return defaultValue
+		return 0, fmt.Errorf("invalid %s %q", key, value)
 	}
 
 	size, err := strconv.ParseInt(numStr, 10, 64)
 	if err != nil {
-		return defaultValue
+		return 0, fmt.Errorf("invalid %s %q", key, value)
 	}
 
-	return size * multiplier
+	return size * multiplier, nil
 }

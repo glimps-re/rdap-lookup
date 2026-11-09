@@ -1,0 +1,71 @@
+---
+version: "2"
+linters:
+  enable:
+    - bodyclose          # checks whether HTTP response body is closed successfully.
+    - canonicalheader    # checks for non-canonical HTTP header usage.
+    - contextcheck       # check if function uses a non-inherited context.
+    - copyloopvar        # detects places where loop variables are copied.
+    - durationcheck      # checks for two durations multiplied together.
+    - dupword            # finds duplicate words in comments and strings.
+    - errcheck           # checks for unchecked errors in Go code.
+    - errorlint          # finds code that can cause problems with Go 1.13 error wrapping.
+    - errname            # checks that sentinel errors follow the ErrXxx naming convention.
+    - exhaustive         # checks exhaustiveness of enum switch statements.
+    - exptostd           # detects golang.org/x/exp functions replaceable by stdlib.
+    - fatcontext         # detects nested context.WithValue in loops.
+    - gocheckcompilerdirectives # validates go compiler directive comments (//go:).
+    - gocritic           # provides diagnostics for bugs, performance and style issues.
+    - godoclint          # checks godoc comment conventions.
+    - gosec              # checks for security issues.
+    - grouper
+    - intrange           # suggests integer range for loops.
+    - mirror             # reports wrong mirror patterns of bytes/strings usage.
+    - misspell           # finds commonly misspelled English words.
+    - modernize          # suggests modern Go idioms.
+    - nilerr             # finds code that returns nil even if the error is not nil.
+    - nilnesserr         # reports returning a different nil error after checking err != nil.
+    - noctx              # finds HTTP requests without context.
+    - nolintlint         # checks nolint directives.
+    - perfsprint         # checks that fmt.Sprintf can be replaced with a faster alternative.
+    - prealloc           # finds slice declarations that could be preallocated.
+    - predeclared        # finds code that shadows Go predefined identifiers.
+    - reassign           # checks that package variables are not reassigned.
+    - recvcheck          # checks for receiver type consistency.
+    - sloglint           # ensures consistent code style when using log/slog.
+    - sqlclosecheck      # checks that sql.Rows and sql.Stmt are closed.
+    - staticcheck        # set of rules from staticcheck.
+    - thelper            # checks that test helpers call t.Helper().
+    - unconvert          # removes unnecessary type conversions.
+    - unparam            # reports unused function parameters.
+    - unused             # checks for unused constants, variables, functions and types.
+    - usestdlibvars      # detects possibility to use variables/constants from stdlib.
+    - usetesting         # reports uses of functions with replacement inside testing.
+    - wastedassign       # finds wasted assignment statements.
+  settings:
+    errcheck:
+      check-blank: true
+    gosec:
+      excludes:
+        # G706: structured slog fields are not string interpolation; the rule
+        # mis-fires on every slog.*("msg", slog.String("error", err.Error())).
+        - G706
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+  exclusions:
+    paths:
+      - frontend/node_modules
+      - pkg/smtprelay/smtpd # vendored copy of chrj/smtpd; lint upstream code separately
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+          - unparam
+
+formatters:
+  enable:
+    - gofumpt
+
+issues:
+  max-same-issues: 0

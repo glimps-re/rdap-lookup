@@ -9,6 +9,7 @@ import (
 // Common error codes returned by the API.
 const (
 	ErrCodeNotFound       = "NOT_FOUND"
+	ErrCodeNoSource       = "NO_SOURCE"
 	ErrCodeInvalidRequest = "INVALID_REQUEST"
 	ErrCodeUpstreamError  = "UPSTREAM_ERROR"
 	ErrCodeRateLimited    = "RATE_LIMITED"
@@ -45,9 +46,9 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("API error %d: %s", e.StatusCode, e.Message)
 }
 
-// IsNotFound returns true if the error indicates a not found response.
+// IsNotFound reports a registry's not-found answer; a NO_SOURCE or code-less 404 is not one.
 func (e *APIError) IsNotFound() bool {
-	return e.StatusCode == http.StatusNotFound || e.Code == ErrCodeNotFound
+	return e.Code == ErrCodeNotFound
 }
 
 // IsRateLimited returns true if the error indicates rate limiting.
@@ -62,8 +63,7 @@ func (e *APIError) IsServerError() bool {
 
 // IsNotFoundError checks if an error is a not found error.
 func IsNotFoundError(err error) bool {
-	var apiErr *APIError
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := errors.AsType[*APIError](err); ok {
 		return apiErr.IsNotFound()
 	}
 	return errors.Is(err, ErrNotFound)
@@ -71,8 +71,7 @@ func IsNotFoundError(err error) bool {
 
 // IsRateLimitedError checks if an error is a rate limit error.
 func IsRateLimitedError(err error) bool {
-	var apiErr *APIError
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := errors.AsType[*APIError](err); ok {
 		return apiErr.IsRateLimited()
 	}
 	return errors.Is(err, ErrRateLimited)
@@ -80,8 +79,7 @@ func IsRateLimitedError(err error) bool {
 
 // IsServerErrorFunc checks if an error is a server error.
 func IsServerErrorFunc(err error) bool {
-	var apiErr *APIError
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := errors.AsType[*APIError](err); ok {
 		return apiErr.IsServerError()
 	}
 	return false

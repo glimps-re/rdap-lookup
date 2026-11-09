@@ -3,6 +3,9 @@ package whois
 import (
 	"errors"
 	"testing"
+	"time"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 func TestWHOISError_Error(t *testing.T) {
@@ -168,4 +171,201 @@ func TestQueryResult_Initialization(t *testing.T) {
 	if !qr.Cached {
 		t.Error("Cached should be true")
 	}
+}
+
+func TestParsedDomain_HasData(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		domain *ParsedDomain
+		want   bool
+	}{
+		{
+			name: "nil domain",
+		},
+		{
+			name: "name and status only",
+			domain: &ParsedDomain{
+				DomainName: "free.de",
+				Status:     []string{"free"},
+			},
+		},
+		{
+			name: "empty entity allocated on a section header",
+			domain: &ParsedDomain{
+				DomainName: "free.de",
+				Registrant: &ParsedEntity{},
+			},
+		},
+		{
+			name:   "creation date",
+			domain: &ParsedDomain{CreatedDate: utc(2020, 1, 1, 0, 0, 0)},
+			want:   true,
+		},
+		{
+			name:   "update date",
+			domain: &ParsedDomain{UpdatedDate: utc(2024, 1, 15, 0, 0, 0)},
+			want:   true,
+		},
+		{
+			name:   "expiration date",
+			domain: &ParsedDomain{ExpirationDate: utc(2030, 1, 1, 0, 0, 0)},
+			want:   true,
+		},
+		{
+			name:   "nameserver",
+			domain: &ParsedDomain{Nameservers: []string{"ns1.taken.de"}},
+			want:   true,
+		},
+		{
+			name: "filled registrant",
+			domain: &ParsedDomain{
+				Registrant: &ParsedEntity{Name: "Taken GmbH"},
+			},
+			want: true,
+		},
+		{
+			name: "filled admin contact",
+			domain: &ParsedDomain{
+				AdminContact: &ParsedEntity{Email: "admin@taken.de"},
+			},
+			want: true,
+		},
+		{
+			name: "filled tech contact",
+			domain: &ParsedDomain{
+				TechContact: &ParsedEntity{Handle: "TECH-1"},
+			},
+			want: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.domain.HasData(); got != tc.want {
+				t.Errorf("HasData() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseResult_MarkNotFound(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name          string
+		domain        *ParsedDomain
+		phraseMatched bool
+		want          *ParseResult
+	}{
+		{
+			name: "phrase without data",
+			domain: &ParsedDomain{
+				DomainName: "free.de",
+				Status:     []string{"free"},
+			},
+			phraseMatched: true,
+			want: &ParseResult{
+				Domain: &ParsedDomain{
+					DomainName: "free.de",
+					Status:     []string{"free"},
+				},
+				Confidence: ConfidenceLow,
+				Errors:     []string{"domain not found"},
+				NotFound:   true,
+			},
+		},
+		{
+			name: "phrase with data",
+			domain: &ParsedDomain{
+				DomainName:  "taken.de",
+				Nameservers: []string{"ns1.taken.de"},
+			},
+			phraseMatched: true,
+			want: &ParseResult{
+				Domain: &ParsedDomain{
+					DomainName:  "taken.de",
+					Nameservers: []string{"ns1.taken.de"},
+				},
+				Confidence: ConfidenceHigh,
+			},
+		},
+		{
+			name:   "no phrase",
+			domain: &ParsedDomain{DomainName: "unknown.de"},
+			want: &ParseResult{
+				Domain:     &ParsedDomain{DomainName: "unknown.de"},
+				Confidence: ConfidenceHigh,
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := &ParseResult{
+				Domain:     tc.domain,
+				Confidence: ConfidenceHigh,
+			}
+
+			got.MarkNotFound(tc.phraseMatched, "domain not found")
+
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("ParseResult mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestParseResult_Err(t *testing.T) {
+	t.Parallel()
+	created := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name    string
+		result  *ParseResult
+		wantErr error
+	}{
+		{
+			name: "not found",
+			result: &ParseResult{
+				Domain:   &ParsedDomain{DomainName: "free.de"},
+				NotFound: true,
+			},
+			wantErr: ErrDomainNotFound,
+		},
+		{
+			name: "nothing extracted",
+			result: &ParseResult{
+				Domain: &ParsedDomain{
+					DomainName: "odd.xx",
+					Status:     []string{"active"},
+				},
+			},
+			wantErr: ErrNoRegistrationData,
+		},
+		{
+			name:    "nil domain",
+			result:  &ParseResult{},
+			wantErr: ErrNoRegistrationData,
+		},
+		{
+			name: "registered",
+			result: &ParseResult{
+				Domain: &ParsedDomain{
+					DomainName:  "taken.xx",
+					CreatedDate: &created,
+				},
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if err := tc.result.Err(); !errors.Is(err, tc.wantErr) {
+				t.Errorf("Err() = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func utc(year int, month time.Month, day, hour, minute, second int) *time.Time {
+	return new(time.Date(year, month, day, hour, minute, second, 0, time.UTC))
 }

@@ -20,6 +20,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -129,10 +130,8 @@ func run() int {
 		logger.Error("failed to create output file", "error", err)
 		return 1
 	}
-	defer func() { _ = file.Close() }()
-
 	generator := &ReportGenerator{}
-	if err := generator.Generate(file, report); err != nil {
+	if err := errors.Join(generator.Generate(file, report), file.Close()); err != nil {
 		logger.Error("failed to generate report", "error", err)
 		return 1
 	}

@@ -300,7 +300,9 @@ func (l *Loader) fetch(ctx context.Context, url string) ([]byte, error) {
 		return nil, fmt.Errorf("fetching %s: %w", url, err)
 	}
 	defer func() {
-		_ = resp.Body.Close()
+		if err := resp.Body.Close(); err != nil {
+			l.logger.Debug("failed to close response body", slog.String("error", err.Error()))
+		}
 	}()
 
 	if resp.StatusCode != http.StatusOK {

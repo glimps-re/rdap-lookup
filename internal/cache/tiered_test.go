@@ -302,11 +302,9 @@ func TestTieredCache_GetOrFetch_Singleflight(t *testing.T) {
 	// Launch multiple concurrent fetches for the same key
 	var wg sync.WaitGroup
 	for range 10 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_, _, _ = cache.GetOrFetch(ctx, "concurrent-key", fetch)
-		}()
+		})
 	}
 	wg.Wait()
 
@@ -393,7 +391,7 @@ func TestDefaultTieredCacheConfig(t *testing.T) {
 }
 
 // setupTieredWithL2 creates a tiered cache with miniredis as L2.
-func setupTieredWithL2(t *testing.T) (*TieredCache, *miniredis.Miniredis) {
+func setupTieredWithL2(t *testing.T) *TieredCache {
 	t.Helper()
 
 	mr, err := miniredis.Run()
@@ -431,11 +429,11 @@ func setupTieredWithL2(t *testing.T) (*TieredCache, *miniredis.Miniredis) {
 		mr.Close()
 	})
 
-	return tc, mr
+	return tc
 }
 
 func TestTieredCache_WithL2_SetAndGet(t *testing.T) {
-	tc, _ := setupTieredWithL2(t)
+	tc := setupTieredWithL2(t)
 
 	ctx := context.Background()
 	key := "test:key"
@@ -459,7 +457,7 @@ func TestTieredCache_WithL2_SetAndGet(t *testing.T) {
 }
 
 func TestTieredCache_WithL2_L2Promotion(t *testing.T) {
-	tc, _ := setupTieredWithL2(t)
+	tc := setupTieredWithL2(t)
 
 	ctx := context.Background()
 	key := "test:promote"
@@ -496,7 +494,7 @@ func TestTieredCache_WithL2_L2Promotion(t *testing.T) {
 }
 
 func TestTieredCache_WithL2_Stats(t *testing.T) {
-	tc, _ := setupTieredWithL2(t)
+	tc := setupTieredWithL2(t)
 
 	ctx := context.Background()
 
@@ -524,7 +522,7 @@ func TestTieredCache_WithL2_Stats(t *testing.T) {
 }
 
 func TestTieredCache_WithL2_Delete(t *testing.T) {
-	tc, _ := setupTieredWithL2(t)
+	tc := setupTieredWithL2(t)
 
 	ctx := context.Background()
 	key := "test:delete"
@@ -552,7 +550,7 @@ func TestTieredCache_WithL2_Delete(t *testing.T) {
 }
 
 func TestTieredCache_WithL2_Clear(t *testing.T) {
-	tc, _ := setupTieredWithL2(t)
+	tc := setupTieredWithL2(t)
 
 	ctx := context.Background()
 
@@ -632,22 +630,18 @@ func TestTieredCache_GetOrFetch_JoinedCallersSurviveFirstCallerCancel(t *testing
 	var err2 error
 
 	// First caller starts the flight.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		val1, _, err1 = c.GetOrFetch(ctx1, "shared-key", fetch)
-	}()
+	})
 
 	// Wait until the fetch goroutine is running, then cancel ctx1.
 	<-fetchStarted
 	cancel1()
 
 	// Second caller joins the in-flight request.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		val2, _, err2 = c.GetOrFetch(ctx2, "shared-key", fetch)
-	}()
+	})
 
 	// Unblock the fetch so both callers can receive the result.
 	close(fetchUnblock)
@@ -729,20 +723,16 @@ func TestTieredCache_GetOrFetchWithNegative_FlightDetachedFromCallerCtx(t *testi
 	var err2 error
 	var val2 []byte
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		_, _, _ = c.GetOrFetchWithNegative(ctx1, "shared-neg-key", fetch, notFoundErr)
-	}()
+	})
 
 	<-fetchStarted
 	cancel1()
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		val2, _, err2 = c.GetOrFetchWithNegative(ctx2, "shared-neg-key", fetch, notFoundErr)
-	}()
+	})
 
 	close(fetchUnblock)
 	wg.Wait()

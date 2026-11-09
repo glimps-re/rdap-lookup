@@ -253,7 +253,7 @@ func (c *StandaloneClient) LookupDomain(ctx context.Context, name string) (*Doma
 	if err != nil {
 		if errors.Is(err, rdap.ErrNotFound) {
 			if c.cache != nil {
-				_ = c.cache.Set(ctx, cacheKey, nil, c.negativeTTL, true)
+				c.cacheSet(ctx, cacheKey, nil, c.negativeTTL, true)
 			}
 			return nil, ErrNotFound
 		}
@@ -269,7 +269,7 @@ func (c *StandaloneClient) LookupDomain(ctx context.Context, name string) (*Doma
 	// Cache result
 	if c.cache != nil {
 		if data, err := json.Marshal(resp); err == nil {
-			_ = c.cache.Set(ctx, cacheKey, data, c.cacheTTL, false)
+			c.cacheSet(ctx, cacheKey, data, c.cacheTTL, false)
 		}
 	}
 
@@ -310,7 +310,7 @@ func (c *StandaloneClient) LookupIP(ctx context.Context, addr string) (*IPRespon
 	if err != nil {
 		if errors.Is(err, rdap.ErrNotFound) {
 			if c.cache != nil {
-				_ = c.cache.Set(ctx, cacheKey, nil, c.negativeTTL, true)
+				c.cacheSet(ctx, cacheKey, nil, c.negativeTTL, true)
 			}
 			return nil, ErrNotFound
 		}
@@ -326,7 +326,7 @@ func (c *StandaloneClient) LookupIP(ctx context.Context, addr string) (*IPRespon
 	// Cache result
 	if c.cache != nil {
 		if data, err := json.Marshal(resp); err == nil {
-			_ = c.cache.Set(ctx, cacheKey, data, c.cacheTTL, false)
+			c.cacheSet(ctx, cacheKey, data, c.cacheTTL, false)
 		}
 	}
 
@@ -370,7 +370,7 @@ func (c *StandaloneClient) LookupASN(ctx context.Context, asn string) (*ASNRespo
 	if err != nil {
 		if errors.Is(err, rdap.ErrNotFound) {
 			if c.cache != nil {
-				_ = c.cache.Set(ctx, cacheKey, nil, c.negativeTTL, true)
+				c.cacheSet(ctx, cacheKey, nil, c.negativeTTL, true)
 			}
 			return nil, ErrNotFound
 		}
@@ -386,7 +386,7 @@ func (c *StandaloneClient) LookupASN(ctx context.Context, asn string) (*ASNRespo
 	// Cache result
 	if c.cache != nil {
 		if data, err := json.Marshal(resp); err == nil {
-			_ = c.cache.Set(ctx, cacheKey, data, c.cacheTTL, false)
+			c.cacheSet(ctx, cacheKey, data, c.cacheTTL, false)
 		}
 	}
 
@@ -441,7 +441,7 @@ func (c *StandaloneClient) LookupEntity(ctx context.Context, handle, serverURL s
 	if err != nil {
 		if errors.Is(err, rdap.ErrNotFound) {
 			if c.cache != nil {
-				_ = c.cache.Set(ctx, cacheKey, nil, c.negativeTTL, true)
+				c.cacheSet(ctx, cacheKey, nil, c.negativeTTL, true)
 			}
 			return nil, ErrNotFound
 		}
@@ -457,7 +457,7 @@ func (c *StandaloneClient) LookupEntity(ctx context.Context, handle, serverURL s
 	// Cache result
 	if c.cache != nil {
 		if data, err := json.Marshal(resp); err == nil {
-			_ = c.cache.Set(ctx, cacheKey, data, c.cacheTTL, false)
+			c.cacheSet(ctx, cacheKey, data, c.cacheTTL, false)
 		}
 	}
 
@@ -578,10 +578,21 @@ func (c *StandaloneClient) Close() error {
 
 	// Close cache
 	if c.cache != nil {
-		_ = c.cache.Close()
+		return c.cache.Close()
 	}
 
 	return nil
+}
+
+// cacheSet stores a lookup result. A failure is only logged: the caller
+// already has the result, and the next lookup simply misses.
+func (c *StandaloneClient) cacheSet(ctx context.Context, key string, data []byte, ttl time.Duration, negative bool) {
+	if err := c.cache.Set(ctx, key, data, ttl, negative); err != nil {
+		c.logger.Debug("failed to cache lookup result",
+			slog.String("key", key),
+			slog.String("error", err.Error()),
+		)
+	}
 }
 
 // Stats returns cache statistics.

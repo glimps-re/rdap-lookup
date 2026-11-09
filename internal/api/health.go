@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 
 	"github.com/glimps-re/rdap-lookup/internal/cache"
 )
@@ -57,7 +57,7 @@ type HealthStatus struct {
 // Returns 200 OK when the service is ready to accept traffic.
 // Returns 503 Service Unavailable when not ready.
 // L2 cache health is checked but only warns on failure (doesn't fail readiness).
-func (h *HealthChecker) ReadinessHandler(c echo.Context) error {
+func (h *HealthChecker) ReadinessHandler(c *echo.Context) error {
 	if !h.IsReady() {
 		return c.JSON(http.StatusServiceUnavailable, HealthStatus{Status: "not ready"})
 	}
@@ -84,6 +84,6 @@ func (h *HealthChecker) ReadinessHandler(c echo.Context) error {
 
 // LivenessHandler handles the /healthz endpoint.
 // Returns 200 OK when the service is alive and functioning.
-func (h *HealthChecker) LivenessHandler(c echo.Context) error {
+func (h *HealthChecker) LivenessHandler(c *echo.Context) error {
 	return c.JSON(http.StatusOK, HealthStatus{Status: "healthy"})
 }

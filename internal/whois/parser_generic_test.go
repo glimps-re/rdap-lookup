@@ -1,7 +1,11 @@
 package whois
 
 import (
+	"errors"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 func TestGenericParser_Name(t *testing.T) {
@@ -23,10 +27,18 @@ func TestGenericParser_SupportsTLD(t *testing.T) {
 	}
 }
 
-func TestGenericParser_Parse_BasicFields(t *testing.T) {
-	p := NewGenericParser()
-
-	response := `Domain Name: example.com
+func TestGenericParser_Parse(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		response string
+		domain   string
+		want     *ParseResult
+		wantErr  error
+	}{
+		{
+			name: "basic fields",
+			response: `Domain Name: example.com
 Registry Domain ID: 1234567890_DOMAIN_COM-VRSN
 Registrar: Example Registrar, Inc.
 Domain Status: clientTransferProhibited
@@ -37,116 +49,61 @@ Creation Date: 2000-01-01T00:00:00Z
 Updated Date: 2024-01-15T10:30:00Z
 Registry Expiry Date: 2025-01-01T00:00:00Z
 DNSSEC: unsigned
-`
-	result, err := p.Parse(response, "example.com")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
-	}
-
-	if result.Confidence != ConfidenceLow {
-		t.Errorf("Confidence = %q, want low", result.Confidence)
-	}
-
-	pd := result.Domain
-
-	if pd.DomainName != "example.com" {
-		t.Errorf("DomainName = %q, want example.com", pd.DomainName)
-	}
-
-	if len(pd.Status) != 2 {
-		t.Errorf("len(Status) = %d, want 2", len(pd.Status))
-	}
-
-	if len(pd.Nameservers) != 2 {
-		t.Errorf("len(Nameservers) = %d, want 2", len(pd.Nameservers))
-	} else if pd.Nameservers[0] != "ns1.example.com" {
-		t.Errorf("Nameservers[0] = %q, want ns1.example.com", pd.Nameservers[0])
-	}
-
-	if pd.CreatedDate == nil {
-		t.Error("CreatedDate should not be nil")
-	} else if pd.CreatedDate.Year() != 2000 {
-		t.Errorf("CreatedDate.Year() = %d, want 2000", pd.CreatedDate.Year())
-	}
-
-	if pd.UpdatedDate == nil {
-		t.Error("UpdatedDate should not be nil")
-	}
-
-	if pd.ExpirationDate == nil {
-		t.Error("ExpirationDate should not be nil")
-	} else if pd.ExpirationDate.Year() != 2025 {
-		t.Errorf("ExpirationDate.Year() = %d, want 2025", pd.ExpirationDate.Year())
-	}
-
-	if pd.Registrar == nil {
-		t.Error("Registrar should not be nil")
-	} else if pd.Registrar.Name != "Example Registrar, Inc." {
-		t.Errorf("Registrar.Name = %q, want Example Registrar, Inc.", pd.Registrar.Name)
-	}
-
-	if pd.DNSSECSigned == nil {
-		t.Error("DNSSECSigned should not be nil")
-	} else if *pd.DNSSECSigned {
-		t.Error("DNSSECSigned should be false for unsigned")
-	}
-}
-
-func TestGenericParser_Parse_RegistrantInfo(t *testing.T) {
-	p := NewGenericParser()
-
-	response := `Domain Name: example.com
+`,
+			domain: "example.com",
+			want: &ParseResult{
+				Domain: &ParsedDomain{
+					DomainName:     "example.com",
+					Status:         []string{"clientTransferProhibited", "clientDeleteProhibited"},
+					Nameservers:    []string{"ns1.example.com", "ns2.example.com"},
+					CreatedDate:    utc(2000, 1, 1, 0, 0, 0),
+					UpdatedDate:    utc(2024, 1, 15, 10, 30, 0),
+					ExpirationDate: utc(2025, 1, 1, 0, 0, 0),
+					Registrar:      &ParsedEntity{Name: "Example Registrar, Inc."},
+					DNSSECSigned:   new(false),
+				},
+				Confidence: ConfidenceLow,
+				ParserName: "generic",
+			},
+		},
+		{
+			name: "registrant info",
+			response: `Domain Name: example.com
 Registrant Name: John Doe
 Registrant Organization: Example Corp
 Registrant Email: john@example.com
-`
-	result, err := p.Parse(response, "example.com")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
-	}
-
-	pd := result.Domain
-
-	if pd.Registrant == nil {
-		t.Fatal("Registrant should not be nil")
-	}
-
-	if pd.Registrant.Name != "John Doe" {
-		t.Errorf("Registrant.Name = %q, want John Doe", pd.Registrant.Name)
-	}
-
-	if pd.Registrant.Organization != "Example Corp" {
-		t.Errorf("Registrant.Organization = %q, want Example Corp", pd.Registrant.Organization)
-	}
-
-	if pd.Registrant.Email != "john@example.com" {
-		t.Errorf("Registrant.Email = %q, want john@example.com", pd.Registrant.Email)
-	}
-}
-
-func TestGenericParser_Parse_DomainNameFallback(t *testing.T) {
-	p := NewGenericParser()
-
-	// Response without Domain Name field
-	response := `Registrar: Example Registrar
-Status: active
-`
-	result, err := p.Parse(response, "fallback.com")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
-	}
-
-	// Should use the provided domain as fallback
-	if result.Domain.DomainName != "fallback.com" {
-		t.Errorf("DomainName = %q, want fallback.com", result.Domain.DomainName)
-	}
-}
-
-func TestGenericParser_Parse_RealCOMResponse(t *testing.T) {
-	p := NewGenericParser()
-
-	// Simulated real .com WHOIS response
-	response := `   Domain Name: GOOGLE.COM
+`,
+			domain: "example.com",
+			want: &ParseResult{
+				Domain: &ParsedDomain{
+					DomainName: "example.com",
+					Registrant: &ParsedEntity{
+						Name:         "John Doe",
+						Organization: "Example Corp",
+						Email:        "john@example.com",
+					},
+				},
+				Confidence: ConfidenceLow,
+				ParserName: "generic",
+			},
+		},
+		{
+			name:     "domain name falls back to the queried domain",
+			response: "Registrar: Example Registrar\nStatus: active\n",
+			domain:   "fallback.com",
+			want: &ParseResult{
+				Domain: &ParsedDomain{
+					DomainName: "fallback.com",
+					Status:     []string{"active"},
+					Registrar:  &ParsedEntity{Name: "Example Registrar"},
+				},
+				Confidence: ConfidenceLow,
+				ParserName: "generic",
+			},
+		},
+		{
+			name: "real .com response",
+			response: `   Domain Name: GOOGLE.COM
    Registry Domain ID: 2138514_DOMAIN_COM-VRSN
    Registrar WHOIS Server: whois.markmonitor.com
    Registrar URL: http://www.markmonitor.com
@@ -170,36 +127,216 @@ func TestGenericParser_Parse_RealCOMResponse(t *testing.T) {
    DNSSEC: unsigned
    URL of the ICANN Whois Inaccuracy Complaint Form: https://www.icann.org/wicf/
 >>> Last update of whois database: 2024-01-15T12:00:00Z <<<
-`
-	result, err := p.Parse(response, "google.com")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
+`,
+			domain: "google.com",
+			want: &ParseResult{
+				Domain: &ParsedDomain{
+					DomainName:     "google.com",
+					Status:         []string{"clientDeleteProhibited https://icann.org/epp#clientDeleteProhibited", "clientTransferProhibited https://icann.org/epp#clientTransferProhibited", "clientUpdateProhibited https://icann.org/epp#clientUpdateProhibited", "serverDeleteProhibited https://icann.org/epp#serverDeleteProhibited", "serverTransferProhibited https://icann.org/epp#serverTransferProhibited", "serverUpdateProhibited https://icann.org/epp#serverUpdateProhibited"},
+					Nameservers:    []string{"ns1.google.com", "ns2.google.com", "ns3.google.com", "ns4.google.com"},
+					CreatedDate:    utc(1997, 9, 15, 4, 0, 0),
+					UpdatedDate:    utc(2019, 9, 9, 15, 39, 4),
+					ExpirationDate: utc(2028, 9, 14, 4, 0, 0),
+					Registrar:      &ParsedEntity{Name: "MarkMonitor Inc."},
+					DNSSECSigned:   new(false),
+				},
+				Confidence: ConfidenceLow,
+				ParserName: "generic",
+			},
+		},
+		{
+			name:   "empty response",
+			domain: "example.com",
+			want: &ParseResult{
+				Domain:     &ParsedDomain{DomainName: "example.com"},
+				Confidence: ConfidenceLow,
+				ParserName: "generic",
+			},
+			wantErr: ErrNoRegistrationData,
+		},
+		{
+			name: "malformed response",
+			response: `%%%%
+This is not a WHOIS response
+Random text
+More garbage
+`,
+			domain: "example.com",
+			want: &ParseResult{
+				Domain:     &ParsedDomain{DomainName: "example.com"},
+				Confidence: ConfidenceLow,
+				ParserName: "generic",
+			},
+			wantErr: ErrNoRegistrationData,
+		},
+		{
+			name:     "date format: ISO",
+			response: "Creation Date: 2020-05-15T10:30:00Z",
+			domain:   "test.com",
+			want: &ParseResult{
+				Domain: &ParsedDomain{
+					DomainName:  "test.com",
+					CreatedDate: utc(2020, 5, 15, 10, 30, 0),
+				},
+				Confidence: ConfidenceLow,
+				ParserName: "generic",
+			},
+		},
+		{
+			name:     "date format: simple date",
+			response: "Creation Date: 2020-05-15",
+			domain:   "test.com",
+			want: &ParseResult{
+				Domain: &ParsedDomain{
+					DomainName:  "test.com",
+					CreatedDate: utc(2020, 5, 15, 0, 0, 0),
+				},
+				Confidence: ConfidenceLow,
+				ParserName: "generic",
+			},
+		},
+		{
+			name:     "date format: Registration Date",
+			response: "Registration Date: 2019-03-20",
+			domain:   "test.com",
+			want: &ParseResult{
+				Domain: &ParsedDomain{
+					DomainName:  "test.com",
+					CreatedDate: utc(2019, 3, 20, 0, 0, 0),
+				},
+				Confidence: ConfidenceLow,
+				ParserName: "generic",
+			},
+		},
+		{
+			name:     "date format: Registration Time",
+			response: "Registration Time: 2003-03-12 00:00:00",
+			domain:   "test.com",
+			want: &ParseResult{
+				Domain: &ParsedDomain{
+					DomainName:  "test.com",
+					CreatedDate: utc(2003, 3, 12, 0, 0, 0),
+				},
+				Confidence: ConfidenceLow,
+				ParserName: "generic",
+			},
+		},
+		{
+			name:     "raw response is stored",
+			response: "Domain Name: example.com\nStatus: active\n",
+			domain:   "example.com",
+			want: &ParseResult{
+				Domain: &ParsedDomain{
+					DomainName: "example.com",
+					Status:     []string{"active"},
+				},
+				Confidence: ConfidenceLow,
+				ParserName: "generic",
+			},
+			wantErr: ErrNoRegistrationData,
+		},
+		{
+			name:     "not found: no match line",
+			response: "No match for \"FREE.XX\".\n",
+			domain:   "free.xx",
+			want: &ParseResult{
+				Domain:     &ParsedDomain{DomainName: "free.xx"},
+				Confidence: ConfidenceLow,
+				ParserName: "generic",
+				Errors:     []string{"domain not found"},
+				NotFound:   true,
+			},
+			wantErr: ErrDomainNotFound,
+		},
+		{
+			name:     "not found: comment-marked not-found line",
+			response: "% No entries found for the selected source(s).\n",
+			domain:   "free.xx",
+			want: &ParseResult{
+				Domain:     &ParsedDomain{DomainName: "free.xx"},
+				Confidence: ConfidenceLow,
+				ParserName: "generic",
+				Errors:     []string{"domain not found"},
+				NotFound:   true,
+			},
+			wantErr: ErrDomainNotFound,
+		},
+		{
+			name:     "not found: status free",
+			response: "Domain: free.xx\nStatus: free\n",
+			domain:   "free.xx",
+			want: &ParseResult{
+				Domain: &ParsedDomain{
+					DomainName: "free.xx",
+					Status:     []string{"free"},
+				},
+				Confidence: ConfidenceLow,
+				ParserName: "generic",
+				Errors:     []string{"domain not found"},
+				NotFound:   true,
+			},
+			wantErr: ErrDomainNotFound,
+		},
+		{
+			name:     "not found: phrase inside a sentence is not trusted",
+			response: "The requested domain free.xx was not found in the database.\n",
+			domain:   "free.xx",
+			want: &ParseResult{
+				Domain:     &ParsedDomain{DomainName: "free.xx"},
+				Confidence: ConfidenceLow,
+				ParserName: "generic",
+			},
+			wantErr: ErrNoRegistrationData,
+		},
+		{
+			name: "not found: registered domain mentioning not found",
+			response: `Domain Name: taken.xx
+Name Server: ns1.taken.xx
+Creation Date: 2020-01-01
+Remarks: report abuse, page not found errors to abuse@registry.xx
+`,
+			domain: "free.xx",
+			want: &ParseResult{
+				Domain: &ParsedDomain{
+					DomainName:  "taken.xx",
+					Nameservers: []string{"ns1.taken.xx"},
+					CreatedDate: utc(2020, 1, 1, 0, 0, 0),
+				},
+				Confidence: ConfidenceLow,
+				ParserName: "generic",
+			},
+		},
+		{
+			name:     "not found: unrecognized empty answer",
+			response: "Query rate exceeded\n",
+			domain:   "free.xx",
+			want: &ParseResult{
+				Domain:     &ParsedDomain{DomainName: "free.xx"},
+				Confidence: ConfidenceLow,
+				ParserName: "generic",
+			},
+			wantErr: ErrNoRegistrationData,
+		},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := NewGenericParser()
 
-	pd := result.Domain
-
-	if pd.DomainName != "google.com" {
-		t.Errorf("DomainName = %q, want google.com", pd.DomainName)
-	}
-
-	if len(pd.Status) != 6 {
-		t.Errorf("len(Status) = %d, want 6", len(pd.Status))
-	}
-
-	if len(pd.Nameservers) != 4 {
-		t.Errorf("len(Nameservers) = %d, want 4", len(pd.Nameservers))
-	}
-
-	if pd.Registrar == nil || pd.Registrar.Name != "MarkMonitor Inc." {
-		t.Errorf("Registrar.Name = %v, want MarkMonitor Inc.", pd.Registrar)
-	}
-
-	if pd.CreatedDate == nil || pd.CreatedDate.Year() != 1997 {
-		t.Errorf("CreatedDate = %v, want 1997", pd.CreatedDate)
-	}
-
-	if pd.ExpirationDate == nil || pd.ExpirationDate.Year() != 2028 {
-		t.Errorf("ExpirationDate = %v, want 2028", pd.ExpirationDate)
+			got, err := p.Parse(tc.response, tc.domain)
+			if err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.want, got, cmpopts.IgnoreFields(ParsedDomain{}, "RawResponse")); diff != "" {
+				t.Errorf("Parse() mismatch (-want +got):\n%s", diff)
+			}
+			if got.Domain.RawResponse != tc.response {
+				t.Errorf("RawResponse = %q, want %q", got.Domain.RawResponse, tc.response)
+			}
+			if err := got.Err(); !errors.Is(err, tc.wantErr) {
+				t.Errorf("Err() = %v, want %v", err, tc.wantErr)
+			}
+		})
 	}
 }
 
@@ -327,107 +464,6 @@ func TestExtractCountry(t *testing.T) {
 				t.Errorf("extractCountry() = %q, want %q", result, tt.expected)
 			}
 		})
-	}
-}
-
-func TestGenericParser_Parse_EmptyResponse(t *testing.T) {
-	p := NewGenericParser()
-
-	result, err := p.Parse("", "example.com")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
-	}
-
-	// Should still return a valid result with domain name from fallback
-	if result.Domain.DomainName != "example.com" {
-		t.Errorf("DomainName = %q, want example.com", result.Domain.DomainName)
-	}
-}
-
-func TestGenericParser_Parse_MalformedResponse(t *testing.T) {
-	p := NewGenericParser()
-
-	// Malformed response with no valid fields
-	response := `%%%%
-This is not a WHOIS response
-Random text
-More garbage
-`
-	result, err := p.Parse(response, "example.com")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
-	}
-
-	// Should handle gracefully
-	if result.Domain.DomainName != "example.com" {
-		t.Errorf("DomainName = %q, want example.com", result.Domain.DomainName)
-	}
-
-	// No nameservers should be extracted
-	if len(result.Domain.Nameservers) != 0 {
-		t.Errorf("len(Nameservers) = %d, want 0", len(result.Domain.Nameservers))
-	}
-}
-
-func TestGenericParser_Parse_DateFormats(t *testing.T) {
-	p := NewGenericParser()
-
-	tests := []struct {
-		name     string
-		response string
-		wantYear int
-	}{
-		{
-			name:     "ISO format",
-			response: "Creation Date: 2020-05-15T10:30:00Z",
-			wantYear: 2020,
-		},
-		{
-			name:     "Simple date",
-			response: "Creation Date: 2020-05-15",
-			wantYear: 2020,
-		},
-		{
-			name:     "With Registration Date",
-			response: "Registration Date: 2019-03-20",
-			wantYear: 2019,
-		},
-		{
-			name:     "Registration Time format",
-			response: "Registration Time: 2003-03-12 00:00:00",
-			wantYear: 2003,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := p.Parse(tt.response, "test.com")
-			if err != nil {
-				t.Fatalf("Parse error = %v", err)
-			}
-
-			if result.Domain.CreatedDate == nil {
-				t.Fatal("CreatedDate should not be nil")
-			}
-
-			if result.Domain.CreatedDate.Year() != tt.wantYear {
-				t.Errorf("CreatedDate.Year() = %d, want %d", result.Domain.CreatedDate.Year(), tt.wantYear)
-			}
-		})
-	}
-}
-
-func TestGenericParser_Parse_StoresRawResponse(t *testing.T) {
-	p := NewGenericParser()
-
-	response := "Domain Name: example.com\nStatus: active\n"
-	result, err := p.Parse(response, "example.com")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
-	}
-
-	if result.Domain.RawResponse != response {
-		t.Errorf("RawResponse not stored correctly")
 	}
 }
 

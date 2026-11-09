@@ -1,4 +1,3 @@
-// Package main provides a debug tool to analyze phishing domains using RDAP.
 package main
 
 import (
@@ -6,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -72,7 +72,11 @@ func (c *PhishStatsClient) FetchPhishingURLs(ctx context.Context, count int) ([]
 	if err != nil {
 		return nil, fmt.Errorf("fetch phishing data: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Debug("failed to close response body", "error", err)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)

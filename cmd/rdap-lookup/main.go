@@ -104,7 +104,11 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("failed to create cache: %w", err)
 	}
-	defer func() { _ = tieredCache.Close() }()
+	defer func() {
+		if err := tieredCache.Close(); err != nil {
+			logger.Warn("failed to close cache", slog.String("error", err.Error()))
+		}
+	}()
 
 	// Wire up cache metrics
 	tieredCache.SetMetrics(metrics.NewCacheMetricsCollector(m))
@@ -122,7 +126,11 @@ func run() error {
 	} else {
 		lookupHandler = api.NewLookupHandler(rdapClient, bs, tieredCache, cfg.Batch, cfg.Server.WriteTimeout, m)
 	}
-	defer func() { _ = lookupHandler.Close() }()
+	defer func() {
+		if err := lookupHandler.Close(); err != nil {
+			logger.Warn("failed to close lookup handler", slog.String("error", err.Error()))
+		}
+	}()
 
 	// Create server with build info and dependencies
 	buildInfo := api.BuildInfo{

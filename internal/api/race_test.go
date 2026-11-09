@@ -11,6 +11,7 @@
 // the header-write code path (respondWithData sets X-Cache: HIT) from many
 // concurrent goroutines. The -race detector validates no data race occurs on
 // the response-header maps.
+
 package api
 
 import (
@@ -102,7 +103,7 @@ func TestServer_KeepAlive_NoConcurrentMapWrites(t *testing.T) {
 			WriteTimeout:    5 * time.Second,
 			ShutdownTimeout: 5 * time.Second,
 			TrustProxy:      false,
-			BodyLimit:       "1MB",
+			BodyLimit:       1024 * 1024,
 		},
 		Log: config.LogConfig{Level: "error", Format: "json"},
 	}

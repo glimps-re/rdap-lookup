@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -20,6 +21,13 @@ import (
 var (
 	Version = "dev"
 )
+
+// closeOrWarn closes c and reports a failure on stderr; the command result stands.
+func closeOrWarn(c io.Closer) {
+	if err := c.Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: close: %v\n", err)
+	}
+}
 
 func main() {
 	if err := run(); err != nil {
@@ -387,7 +395,7 @@ Examples:
 	if err != nil {
 		return err
 	}
-	defer func() { _ = client.Close() }()
+	defer closeOrWarn(client)
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()
@@ -440,7 +448,7 @@ Examples:
 	if err != nil {
 		return err
 	}
-	defer func() { _ = client.Close() }()
+	defer closeOrWarn(client)
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()
@@ -493,7 +501,7 @@ Examples:
 	if err != nil {
 		return err
 	}
-	defer func() { _ = client.Close() }()
+	defer closeOrWarn(client)
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()
@@ -562,7 +570,7 @@ Examples:
 	if err != nil {
 		return err
 	}
-	defer func() { _ = client.Close() }()
+	defer closeOrWarn(client)
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()
@@ -641,7 +649,7 @@ Examples:
 		if err != nil {
 			return fmt.Errorf("failed to open file: %w", err)
 		}
-		defer func() { _ = file.Close() }()
+		defer closeOrWarn(file)
 
 		scanner := bufio.NewScanner(file)
 		for scanner.Scan() {
@@ -677,7 +685,7 @@ Examples:
 	if err != nil {
 		return err
 	}
-	defer func() { _ = client.Close() }()
+	defer closeOrWarn(client)
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()
@@ -694,7 +702,7 @@ Examples:
 // points to an existing file. Returns the cleaned path and true on success.
 func resolveBatchFile(arg string) (string, bool) {
 	p := filepath.Clean(arg)
-	if _, err := os.Stat(p); err != nil {
+	if _, err := os.Stat(p); err != nil { //nolint:gosec // G703: user-supplied CLI arg by design
 		return "", false
 	}
 	return p, true
@@ -749,7 +757,7 @@ Examples:
 	if err != nil {
 		return err
 	}
-	defer func() { _ = client.Close() }()
+	defer closeOrWarn(client)
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()

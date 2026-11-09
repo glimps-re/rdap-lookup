@@ -268,7 +268,7 @@ func New() *Metrics {
 				Name: "rdap_lookup_outcomes_total",
 				Help: "Total number of RDAP lookup outcomes",
 			},
-			[]string{"type", "outcome"}, // outcome: success, not_found, error, timeout, rate_limited
+			[]string{"type", "outcome"}, // outcome: success, not_found, no_source, error, timeout, rate_limited
 		),
 		LookupSource: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
@@ -403,8 +403,7 @@ func (m *Metrics) Register() error {
 	// Register default Go runtime metrics
 	if err := prometheus.Register(collectors.NewGoCollector()); err != nil {
 		// Ignore if already registered
-		var alreadyRegistered prometheus.AlreadyRegisteredError
-		if !errors.As(err, &alreadyRegistered) {
+		if _, ok := errors.AsType[prometheus.AlreadyRegisteredError](err); !ok {
 			return err
 		}
 	}
@@ -478,8 +477,7 @@ func (m *Metrics) Register() error {
 	for _, c := range metricCollectors {
 		if err := prometheus.Register(c); err != nil {
 			// Ignore if already registered
-			var alreadyRegistered prometheus.AlreadyRegisteredError
-			if !errors.As(err, &alreadyRegistered) {
+			if _, ok := errors.AsType[prometheus.AlreadyRegisteredError](err); !ok {
 				return err
 			}
 		}

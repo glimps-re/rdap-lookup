@@ -91,6 +91,40 @@ type ParseResult struct {
 	ParserName string
 	// Errors contains any non-fatal parsing errors encountered.
 	Errors []string
+	// NotFound reports that the registry answered the domain is not registered.
+	NotFound bool
+}
+
+// HasData leaves out name and status: a not-found answer often carries them.
+func (pd *ParsedDomain) HasData() bool {
+	return pd != nil && (pd.CreatedDate != nil || pd.UpdatedDate != nil || pd.ExpirationDate != nil || len(pd.Nameservers) > 0 ||
+		pd.Registrar.isSet() || pd.Registrant.isSet() || pd.AdminContact.isSet() || pd.TechContact.isSet())
+}
+
+// Parsers allocate an entity on its section header, before knowing whether any field follows.
+func (e *ParsedEntity) isSet() bool {
+	return e != nil && *e != (ParsedEntity{})
+}
+
+// MarkNotFound needs an empty result: a registered domain's answer may contain the phrase too.
+func (r *ParseResult) MarkNotFound(phraseMatched bool, reason string) {
+	if !phraseMatched || r.Domain.HasData() {
+		return
+	}
+	r.NotFound = true
+	r.Confidence = ConfidenceLow
+	r.Errors = append(r.Errors, reason)
+}
+
+// Err is nil only when registration data was extracted.
+func (r *ParseResult) Err() error {
+	if r.NotFound {
+		return ErrDomainNotFound
+	}
+	if !r.Domain.HasData() {
+		return ErrNoRegistrationData
+	}
+	return nil
 }
 
 // QueryResult contains the result of a WHOIS query.

@@ -2,6 +2,7 @@ package parsers
 
 import (
 	"testing"
+	"time"
 
 	"github.com/glimps-re/rdap-lookup/internal/whois"
 )
@@ -224,4 +225,8 @@ func TestParsersParseCorrectly(t *testing.T) {
 			}
 		})
 	}
+}
+
+func utc(year int, month time.Month, day, hour, minute, second int) *time.Time {
+	return new(time.Date(year, month, day, hour, minute, second, 0, time.UTC))
 }

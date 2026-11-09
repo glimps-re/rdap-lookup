@@ -294,8 +294,7 @@ func TestClient_doQuery_ConnectionRefused(t *testing.T) {
 		t.Error("expected connection error")
 	}
 
-	var whoisErr *WHOISError
-	if !errors.As(err, &whoisErr) {
+	if _, ok := errors.AsType[*WHOISError](err); !ok {
 		t.Errorf("expected WHOISError, got %T", err)
 	}
 }
@@ -458,15 +457,13 @@ Status: active
 	errCh := make(chan error, 10)
 
 	for range 10 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			ctx := context.Background()
 			_, err := c.doQueryAddr(ctx, "test.com", "mock.server", serverAddr)
 			if err != nil {
 				errCh <- err
 			}
-		}()
+		})
 	}
 
 	wg.Wait()

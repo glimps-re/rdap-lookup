@@ -425,7 +425,9 @@ func (c *Client) doQuery(ctx context.Context, queryType QueryType, queryURL stri
 		return nil, fmt.Errorf("http request: %w", err)
 	}
 	defer func() {
-		_ = resp.Body.Close()
+		if err := resp.Body.Close(); err != nil {
+			c.logger.Debug("failed to close response body", slog.String("error", err.Error()))
+		}
 	}()
 
 	duration := time.Since(start)

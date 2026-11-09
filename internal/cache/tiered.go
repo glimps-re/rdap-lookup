@@ -84,8 +84,7 @@ func NewTieredCache(cfg TieredCacheConfig) (*TieredCache, error) {
 	if cfg.L2Config != nil {
 		l2, err = NewRedisCache(*cfg.L2Config)
 		if err != nil {
-			_ = l1.Close()
-			return nil, err
+			return nil, errors.Join(err, l1.Close())
 		}
 	}
 
@@ -235,6 +234,17 @@ func (t *TieredCache) SetWithDefaultTTL(ctx context.Context, key string, value [
 	return t.Set(ctx, key, value, ttl, negative)
 }
 
+// storeFetched caches a fetched value. A failure is only logged: the caller
+// already has the value, and the next lookup simply misses.
+func (t *TieredCache) storeFetched(ctx context.Context, key string, value []byte, negative bool) {
+	if err := t.SetWithDefaultTTL(ctx, key, value, negative); err != nil && t.logger != nil {
+		t.logger.Debug("failed to cache fetched entry",
+			slog.String("key", key),
+			slog.String("error", err.Error()),
+		)
+	}
+}
+
 // Delete removes an entry from both cache tiers.
 func (t *TieredCache) Delete(ctx context.Context, key string) error {
 	// Delete from L1
@@ -345,7 +355,7 @@ func (t *TieredCache) GetOrFetch(ctx context.Context, key string, fetch func(ctx
 		}
 
 		// Store in cache.
-		_ = t.SetWithDefaultTTL(fetchCtx, key, value, false)
+		t.storeFetched(fetchCtx, key, value, false)
 
 		return value, nil
 	})
@@ -398,14 +408,14 @@ func (t *TieredCache) GetOrFetchWithNegative(ctx context.Context, key string, fe
 		if fetchErr != nil {
 			// Check if this is a "not found" error that should be negatively cached.
 			if errors.Is(fetchErr, notFoundErr) {
-				_ = t.SetWithDefaultTTL(fetchCtx, key, nil, true)
+				t.storeFetched(fetchCtx, key, nil, true)
 				return nil, notFoundErr
 			}
 			return nil, fetchErr
 		}
 
 		// Store in cache.
-		_ = t.SetWithDefaultTTL(fetchCtx, key, value, false)
+		t.storeFetched(fetchCtx, key, value, false)
 
 		return value, nil
 	})

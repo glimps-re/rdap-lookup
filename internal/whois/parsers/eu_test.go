@@ -1,7 +1,12 @@
 package parsers
 
 import (
+	"errors"
 	"testing"
+
+	"github.com/glimps-re/rdap-lookup/internal/whois"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 func TestEUParser_Name(t *testing.T) {
@@ -34,10 +39,18 @@ func TestEUParser_SupportsTLD(t *testing.T) {
 	}
 }
 
-func TestEUParser_Parse_BasicDomain(t *testing.T) {
-	p := NewEUParser()
-
-	response := `Domain: example.eu
+func TestEUParser_Parse(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		response string
+		domain   string
+		want     *whois.ParseResult
+		wantErr  error
+	}{
+		{
+			name: "basic domain",
+			response: `Domain: example.eu
 Script: LATIN
 
 Registrant:
@@ -63,84 +76,97 @@ DNSSEC:
         signedDelegation
 
 Please visit www.eurid.eu for more info.
-`
-
-	result, err := p.Parse(response, "example.eu")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
+`,
+			domain: "example.eu",
+			want: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{
+					DomainName:  "example.eu",
+					Nameservers: []string{"ns1.example.eu", "ns2.example.eu"},
+					Registrar: &whois.ParsedEntity{
+						Name:    "Example Registrar",
+						Address: "https://www.example-registrar.eu",
+					},
+					TechContact: &whois.ParsedEntity{
+						Name:         "Technical Contact",
+						Organization: "Example Tech Ltd",
+						Email:        "tech@example.eu",
+						Phone:        "+32.123456789",
+					},
+					DNSSECSigned: new(true),
+				},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "eu",
+			},
+		},
+		{
+			name:     "not found: Status available",
+			response: "Status: AVAILABLE\n",
+			domain:   "notfound.eu",
+			want: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{
+					DomainName: "notfound.eu",
+					Status:     []string{"AVAILABLE"},
+				},
+				Confidence: whois.ConfidenceLow,
+				ParserName: "eu",
+				Errors:     []string{"domain not found or available"},
+				NotFound:   true,
+			},
+			wantErr: whois.ErrDomainNotFound,
+		},
+		{
+			name:     "not found: Not found",
+			response: "Domain not found\n",
+			domain:   "notfound.eu",
+			want: &whois.ParseResult{
+				Domain:     &whois.ParsedDomain{DomainName: "notfound.eu"},
+				Confidence: whois.ConfidenceLow,
+				ParserName: "eu",
+				Errors:     []string{"domain not found or available"},
+				NotFound:   true,
+			},
+			wantErr: whois.ErrDomainNotFound,
+		},
+		{
+			name:     "not found: No entries",
+			response: "No entries found\n",
+			domain:   "notfound.eu",
+			want: &whois.ParseResult{
+				Domain:     &whois.ParsedDomain{DomainName: "notfound.eu"},
+				Confidence: whois.ConfidenceLow,
+				ParserName: "eu",
+				Errors:     []string{"domain not found or available"},
+				NotFound:   true,
+			},
+			wantErr: whois.ErrDomainNotFound,
+		},
+		{
+			name:   "empty response",
+			domain: "example.eu",
+			want: &whois.ParseResult{
+				Domain:     &whois.ParsedDomain{DomainName: "example.eu"},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "eu",
+			},
+			wantErr: whois.ErrNoRegistrationData,
+		},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := NewEUParser()
 
-	pd := result.Domain
-
-	if pd.DomainName != "example.eu" {
-		t.Errorf("DomainName = %q, want example.eu", pd.DomainName)
-	}
-
-	if len(pd.Nameservers) != 2 {
-		t.Errorf("len(Nameservers) = %d, want 2", len(pd.Nameservers))
-	} else if pd.Nameservers[0] != "ns1.example.eu" {
-		t.Errorf("Nameservers[0] = %q, want ns1.example.eu", pd.Nameservers[0])
-	}
-
-	if pd.TechContact == nil {
-		t.Fatal("TechContact should not be nil")
-	}
-	if pd.TechContact.Name != "Technical Contact" {
-		t.Errorf("TechContact.Name = %q, want Technical Contact", pd.TechContact.Name)
-	}
-
-	if pd.Registrar == nil {
-		t.Fatal("Registrar should not be nil")
-	}
-	if pd.Registrar.Name != "Example Registrar" {
-		t.Errorf("Registrar.Name = %q, want Example Registrar", pd.Registrar.Name)
-	}
-
-	if pd.DNSSECSigned == nil || !*pd.DNSSECSigned {
-		t.Error("DNSSECSigned should be true")
-	}
-
-	if result.Confidence != "high" {
-		t.Errorf("Confidence = %q, want high", result.Confidence)
-	}
-}
-
-func TestEUParser_Parse_NotFound(t *testing.T) {
-	p := NewEUParser()
-
-	tests := []struct {
-		name     string
-		response string
-	}{
-		{"Status available", "Status: AVAILABLE\n"},
-		{"Not found", "Domain not found\n"},
-		{"No entries", "No entries found\n"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := p.Parse(tt.response, "notfound.eu")
+			got, err := p.Parse(tc.response, tc.domain)
 			if err != nil {
-				t.Fatalf("Parse error = %v", err)
+				t.Fatalf("Parse() error = %v", err)
 			}
-
-			if result.Confidence != "low" {
-				t.Errorf("Confidence = %q, want low", result.Confidence)
+			if diff := cmp.Diff(tc.want, got, cmpopts.IgnoreFields(whois.ParsedDomain{}, "RawResponse")); diff != "" {
+				t.Errorf("Parse() mismatch (-want +got):\n%s", diff)
+			}
+			if err := got.Err(); !errors.Is(err, tc.wantErr) {
+				t.Errorf("Err() = %v, want %v", err, tc.wantErr)
 			}
 		})
-	}
-}
-
-func TestEUParser_Parse_EmptyResponse(t *testing.T) {
-	p := NewEUParser()
-
-	result, err := p.Parse("", "example.eu")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
-	}
-
-	if result.Domain.DomainName != "example.eu" {
-		t.Errorf("DomainName = %q, want example.eu", result.Domain.DomainName)
 	}
 }
 

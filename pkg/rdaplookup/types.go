@@ -17,7 +17,10 @@ type DomainResponse struct {
 	Nameservers    []SimpleNS     `json:"nameservers,omitempty"`
 	DNSSEC         *SimpleDNSSEC  `json:"dnssec,omitempty"`
 	Country        string         `json:"country,omitempty"`
+	DataSource     string         `json:"data_source,omitempty"`
 	RDAPServer     string         `json:"rdap_server,omitempty"`
+	WHOISServer    string         `json:"whois_server,omitempty"`
+	Confidence     string         `json:"confidence,omitempty"`
 	Cached         bool           `json:"cached,omitempty"`
 }
 
@@ -204,7 +207,10 @@ func domainFromSchema(s *schema.SimpleDomain) *DomainResponse {
 		Registrant:     contactFromSchema(s.Registrant),
 		AdminContact:   contactFromSchema(s.AdminContact),
 		TechContact:    contactFromSchema(s.TechContact),
+		DataSource:     s.DataSource,
 		RDAPServer:     s.RDAPServer,
+		WHOISServer:    s.WHOISServer,
+		Confidence:     s.Confidence,
 	}
 
 	// Convert nameservers

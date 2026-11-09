@@ -1,7 +1,12 @@
 package parsers
 
 import (
+	"errors"
 	"testing"
+
+	"github.com/glimps-re/rdap-lookup/internal/whois"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 func TestDEParser_Name(t *testing.T) {
@@ -35,63 +40,40 @@ func TestDEParser_SupportsTLD(t *testing.T) {
 	}
 }
 
-func TestDEParser_Parse_BasicDomain(t *testing.T) {
-	p := NewDEParser()
-
-	response := `Domain: example.de
+func TestDEParser_Parse(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		response string
+		domain   string
+		want     *whois.ParseResult
+		wantErr  error
+	}{
+		{
+			name: "basic domain",
+			response: `Domain: example.de
 Nserver: ns1.example.de
 Nserver: ns2.example.de
 Status: connect
 Changed: 2024-01-15T10:30:00+01:00
 RegCreatedDate: 2000-05-20T00:00:00+02:00
-`
-
-	result, err := p.Parse(response, "example.de")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
-	}
-
-	pd := result.Domain
-
-	if pd.DomainName != "example.de" {
-		t.Errorf("DomainName = %q, want example.de", pd.DomainName)
-	}
-
-	if len(pd.Nameservers) != 2 {
-		t.Errorf("len(Nameservers) = %d, want 2", len(pd.Nameservers))
-	} else if pd.Nameservers[0] != "ns1.example.de" {
-		t.Errorf("Nameservers[0] = %q, want ns1.example.de", pd.Nameservers[0])
-	}
-
-	if len(pd.Status) != 1 || pd.Status[0] != "connect" {
-		t.Errorf("Status = %v, want [connect]", pd.Status)
-	}
-
-	if pd.UpdatedDate == nil {
-		t.Error("UpdatedDate should not be nil")
-	} else if pd.UpdatedDate.Year() != 2024 {
-		t.Errorf("UpdatedDate.Year() = %d, want 2024", pd.UpdatedDate.Year())
-	}
-
-	if pd.CreatedDate == nil {
-		t.Error("CreatedDate should not be nil")
-	} else if pd.CreatedDate.Year() != 2000 {
-		t.Errorf("CreatedDate.Year() = %d, want 2000", pd.CreatedDate.Year())
-	}
-
-	if result.Confidence != "high" {
-		t.Errorf("Confidence = %q, want high", result.Confidence)
-	}
-
-	if result.ParserName != "de" {
-		t.Errorf("ParserName = %q, want de", result.ParserName)
-	}
-}
-
-func TestDEParser_Parse_WithContacts(t *testing.T) {
-	p := NewDEParser()
-
-	response := `Domain: example.de
+`,
+			domain: "example.de",
+			want: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{
+					DomainName:  "example.de",
+					Status:      []string{"connect"},
+					Nameservers: []string{"ns1.example.de", "ns2.example.de"},
+					CreatedDate: utc(2000, 5, 19, 22, 0, 0),
+					UpdatedDate: utc(2024, 1, 15, 9, 30, 0),
+				},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "de",
+			},
+		},
+		{
+			name: "with contacts",
+			response: `Domain: example.de
 Nserver: ns1.example.de
 Status: connect
 
@@ -111,139 +93,225 @@ Type: ROLE
 Name: Technical Support
 Organisation: Hosting Provider
 Email: tech@provider.de
-`
-
-	result, err := p.Parse(response, "example.de")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
-	}
-
-	pd := result.Domain
-
-	// Check registrant (Holder)
-	if pd.Registrant == nil {
-		t.Fatal("Registrant should not be nil")
-	}
-	if pd.Registrant.Name != "John Doe" {
-		t.Errorf("Registrant.Name = %q, want John Doe", pd.Registrant.Name)
-	}
-	if pd.Registrant.Organization != "Example GmbH" {
-		t.Errorf("Registrant.Organization = %q, want Example GmbH", pd.Registrant.Organization)
-	}
-	if pd.Registrant.City != "Berlin" {
-		t.Errorf("Registrant.City = %q, want Berlin", pd.Registrant.City)
-	}
-	if pd.Registrant.Country != "DE" {
-		t.Errorf("Registrant.Country = %q, want DE", pd.Registrant.Country)
-	}
-
-	// Check tech contact
-	if pd.TechContact == nil {
-		t.Fatal("TechContact should not be nil")
-	}
-	if pd.TechContact.Name != "Technical Support" {
-		t.Errorf("TechContact.Name = %q, want Technical Support", pd.TechContact.Name)
-	}
-}
-
-func TestDEParser_Parse_NotFound(t *testing.T) {
-	p := NewDEParser()
-
-	tests := []struct {
-		name     string
-		response string
-	}{
-		{"Status free", "Status: free\n"},
-		{"Object not found", "% Object not found\n"},
-		{"No entries found", "No entries found for the selected source(s).\n"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := p.Parse(tt.response, "notfound.de")
-			if err != nil {
-				t.Fatalf("Parse error = %v", err)
-			}
-
-			if result.Confidence != "low" {
-				t.Errorf("Confidence = %q, want low", result.Confidence)
-			}
-
-			if len(result.Errors) == 0 {
-				t.Error("Expected errors to be populated")
-			}
-		})
-	}
-}
-
-func TestDEParser_Parse_DNSSEC(t *testing.T) {
-	p := NewDEParser()
-
-	tests := []struct {
-		name     string
-		response string
-		expected bool
-	}{
+`,
+			domain: "example.de",
+			want: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{
+					DomainName:  "example.de",
+					Status:      []string{"connect"},
+					Nameservers: []string{"ns1.example.de"},
+					Registrant: &whois.ParsedEntity{
+						Name:         "John Doe",
+						Organization: "Example GmbH",
+						Email:        "holder@example.de",
+						Phone:        "+49.301234567",
+						Address:      "Example Street 123",
+						Country:      "DE",
+						City:         "Berlin",
+						PostalCode:   "10115",
+					},
+					TechContact: &whois.ParsedEntity{
+						Name:         "Technical Support",
+						Organization: "Hosting Provider",
+						Email:        "tech@provider.de",
+					},
+				},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "de",
+			},
+		},
 		{
-			name:     "DNSKEY present",
+			name:     "not found: Status free",
+			response: "Status: free\n",
+			domain:   "notfound.de",
+			want: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{
+					DomainName: "notfound.de",
+					Status:     []string{"free"},
+				},
+				Confidence: whois.ConfidenceLow,
+				ParserName: "de",
+				Errors:     []string{"domain not found or free"},
+				NotFound:   true,
+			},
+			wantErr: whois.ErrDomainNotFound,
+		},
+		{
+			name:     "not found: Object not found",
+			response: "% Object not found\n",
+			domain:   "notfound.de",
+			want: &whois.ParseResult{
+				Domain:     &whois.ParsedDomain{DomainName: "notfound.de"},
+				Confidence: whois.ConfidenceLow,
+				ParserName: "de",
+				Errors:     []string{"domain not found or free"},
+				NotFound:   true,
+			},
+			wantErr: whois.ErrDomainNotFound,
+		},
+		{
+			name:     "not found: No entries found",
+			response: "No entries found for the selected source(s).\n",
+			domain:   "notfound.de",
+			want: &whois.ParseResult{
+				Domain:     &whois.ParsedDomain{DomainName: "notfound.de"},
+				Confidence: whois.ConfidenceLow,
+				ParserName: "de",
+				Errors:     []string{"domain not found or free"},
+				NotFound:   true,
+			},
+			wantErr: whois.ErrDomainNotFound,
+		},
+		{
+			name:     "DNSSEC: DNSKEY present",
 			response: "Domain: example.de\nDnskey: 257 3 8 AwEAAb...\n",
-			expected: true,
+			domain:   "example.de",
+			want: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{
+					DomainName:   "example.de",
+					DNSSECSigned: new(true),
+				},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "de",
+			},
+			wantErr: whois.ErrNoRegistrationData,
 		},
 		{
-			name:     "DNSSEC signed",
+			name:     "DNSSEC: DNSSEC signed",
 			response: "Domain: example.de\nDnssec: Y\n",
-			expected: true,
+			domain:   "example.de",
+			want: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{
+					DomainName:   "example.de",
+					DNSSECSigned: new(true),
+				},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "de",
+			},
+			wantErr: whois.ErrNoRegistrationData,
 		},
 		{
-			name:     "DNSSEC unsigned",
+			name:     "DNSSEC: DNSSEC unsigned",
 			response: "Domain: example.de\nDnssec: N\n",
-			expected: false,
+			domain:   "example.de",
+			want: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{
+					DomainName:   "example.de",
+					DNSSECSigned: new(false),
+				},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "de",
+			},
+			wantErr: whois.ErrNoRegistrationData,
 		},
 		{
-			name:     "DNSSEC unsigned explicit",
+			name:     "DNSSEC: DNSSEC unsigned explicit",
 			response: "Domain: example.de\nDnssec: unsigned\n",
-			expected: false,
+			domain:   "example.de",
+			want: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{
+					DomainName:   "example.de",
+					DNSSECSigned: new(false),
+				},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "de",
+			},
+			wantErr: whois.ErrNoRegistrationData,
+		},
+		{
+			name:     "nameserver with IP stripped",
+			response: "Domain: example.de\nNserver: ns1.example.de 192.168.1.1\nNserver: ns2.example.de 192.168.1.2\n",
+			domain:   "example.de",
+			want: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{
+					DomainName:  "example.de",
+					Nameservers: []string{"ns1.example.de", "ns2.example.de"},
+				},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "de",
+			},
+		},
+		{
+			name:   "empty response falls back to domain",
+			domain: "example.de",
+			want: &whois.ParseResult{
+				Domain:     &whois.ParsedDomain{DomainName: "example.de"},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "de",
+			},
+			wantErr: whois.ErrNoRegistrationData,
+		},
+		{
+			name: "real-world DENIC format",
+			response: `% Restricted rights.
+%
+% Terms and Conditions of Use
+%
+% The above data may only be used within the scope of technical or
+% administrative necessities of Internet operation or to remedy legal
+% problems.
+
+Domain: google.de
+Nserver: ns1.google.com
+Nserver: ns2.google.com
+Nserver: ns3.google.com
+Nserver: ns4.google.com
+Status: connect
+Changed: 2023-09-15T08:25:21+02:00
+
+[Tech-C]
+Type: ROLE
+Name: DNS Admin
+Organisation: Google Germany GmbH
+Address: ABC-Strasse 19
+PostalCode: 20354
+City: Hamburg
+CountryCode: DE
+Phone: +49.40808179000
+Fax: +49.40808179001
+Email: dns-admin@google.com
+Changed: 2015-11-19T14:52:42+01:00
+`,
+			domain: "google.de",
+			want: &whois.ParseResult{
+				Domain: &whois.ParsedDomain{
+					DomainName:  "google.de",
+					Status:      []string{"connect"},
+					Nameservers: []string{"ns1.google.com", "ns2.google.com", "ns3.google.com", "ns4.google.com"},
+					UpdatedDate: utc(2023, 9, 15, 6, 25, 21),
+					TechContact: &whois.ParsedEntity{
+						Name:         "DNS Admin",
+						Organization: "Google Germany GmbH",
+						Email:        "dns-admin@google.com",
+						Phone:        "+49.40808179000",
+						Fax:          "+49.40808179001",
+						Address:      "ABC-Strasse 19",
+						Country:      "DE",
+						City:         "Hamburg",
+						PostalCode:   "20354",
+					},
+				},
+				Confidence: whois.ConfidenceHigh,
+				ParserName: "de",
+			},
 		},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := NewDEParser()
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := p.Parse(tt.response, "example.de")
+			got, err := p.Parse(tc.response, tc.domain)
 			if err != nil {
-				t.Fatalf("Parse error = %v", err)
+				t.Fatalf("Parse() error = %v", err)
 			}
-
-			if result.Domain.DNSSECSigned == nil {
-				t.Fatal("DNSSECSigned should not be nil")
+			if diff := cmp.Diff(tc.want, got, cmpopts.IgnoreFields(whois.ParsedDomain{}, "RawResponse")); diff != "" {
+				t.Errorf("Parse() mismatch (-want +got):\n%s", diff)
 			}
-
-			if *result.Domain.DNSSECSigned != tt.expected {
-				t.Errorf("DNSSECSigned = %v, want %v", *result.Domain.DNSSECSigned, tt.expected)
+			if err := got.Err(); !errors.Is(err, tc.wantErr) {
+				t.Errorf("Err() = %v, want %v", err, tc.wantErr)
 			}
 		})
-	}
-}
-
-func TestDEParser_Parse_NameserverWithIP(t *testing.T) {
-	p := NewDEParser()
-
-	response := `Domain: example.de
-Nserver: ns1.example.de 192.168.1.1
-Nserver: ns2.example.de 192.168.1.2
-`
-
-	result, err := p.Parse(response, "example.de")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
-	}
-
-	if len(result.Domain.Nameservers) != 2 {
-		t.Fatalf("len(Nameservers) = %d, want 2", len(result.Domain.Nameservers))
-	}
-
-	// IP addresses should be stripped
-	if result.Domain.Nameservers[0] != "ns1.example.de" {
-		t.Errorf("Nameservers[0] = %q, want ns1.example.de", result.Domain.Nameservers[0])
 	}
 }
 
@@ -300,82 +368,6 @@ func TestNormalizeNameserver(t *testing.T) {
 				t.Errorf("normalizeNameserver(%q) = %q, want %q", tt.input, result, tt.expected)
 			}
 		})
-	}
-}
-
-func TestDEParser_Parse_EmptyResponse(t *testing.T) {
-	p := NewDEParser()
-
-	result, err := p.Parse("", "example.de")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
-	}
-
-	// Should use domain as fallback
-	if result.Domain.DomainName != "example.de" {
-		t.Errorf("DomainName = %q, want example.de", result.Domain.DomainName)
-	}
-}
-
-func TestDEParser_Parse_RealWorldFormat(t *testing.T) {
-	p := NewDEParser()
-
-	// Simulated real-world DENIC response format
-	response := `% Restricted rights.
-%
-% Terms and Conditions of Use
-%
-% The above data may only be used within the scope of technical or
-% administrative necessities of Internet operation or to remedy legal
-% problems.
-
-Domain: google.de
-Nserver: ns1.google.com
-Nserver: ns2.google.com
-Nserver: ns3.google.com
-Nserver: ns4.google.com
-Status: connect
-Changed: 2023-09-15T08:25:21+02:00
-
-[Tech-C]
-Type: ROLE
-Name: DNS Admin
-Organisation: Google Germany GmbH
-Address: ABC-Strasse 19
-PostalCode: 20354
-City: Hamburg
-CountryCode: DE
-Phone: +49.40808179000
-Fax: +49.40808179001
-Email: dns-admin@google.com
-Changed: 2015-11-19T14:52:42+01:00
-`
-
-	result, err := p.Parse(response, "google.de")
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
-	}
-
-	pd := result.Domain
-
-	if pd.DomainName != "google.de" {
-		t.Errorf("DomainName = %q, want google.de", pd.DomainName)
-	}
-
-	if len(pd.Nameservers) != 4 {
-		t.Errorf("len(Nameservers) = %d, want 4", len(pd.Nameservers))
-	}
-
-	if pd.TechContact == nil {
-		t.Fatal("TechContact should not be nil")
-	}
-
-	if pd.TechContact.Name != "DNS Admin" {
-		t.Errorf("TechContact.Name = %q, want DNS Admin", pd.TechContact.Name)
-	}
-
-	if pd.TechContact.Organization != "Google Germany GmbH" {
-		t.Errorf("TechContact.Organization = %q, want Google Germany GmbH", pd.TechContact.Organization)
 	}
 }
 

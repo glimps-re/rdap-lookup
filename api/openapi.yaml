@@ -15,6 +15,9 @@ info:
     automatically query the appropriate WHOIS server and parse the response. WHOIS responses
     include additional fields (`data_source`, `whois_server`, `confidence`) to indicate
     the data source and parsing confidence level.
+
+    A 404 carries one of two codes: `NOT_FOUND` when a registry answered the object does
+    not exist, `NO_SOURCE` when no RDAP or WHOIS server could be asked, so nothing is known.
   version: 1.1.0
   license:
     name: MIT
@@ -710,6 +713,7 @@ components:
               enum:
                 - INVALID_REQUEST
                 - NOT_FOUND
+                - NO_SOURCE
                 - RATE_LIMITED
                 - UPSTREAM_ERROR
                 - INTERNAL_ERROR
@@ -730,7 +734,10 @@ components:
               message: Domain name is required
 
     NotFound:
-      description: Resource not found
+      description: |
+        No registration data. `NOT_FOUND`: a registry answered the object does not exist.
+        `NO_SOURCE`: no RDAP server in the IANA bootstrap and no WHOIS server (fallback disabled
+        or none listed by IANA), so nothing is known about the object.
       content:
         application/json:
           schema:
@@ -752,7 +759,7 @@ components:
               message: Upstream RDAP server rate limit exceeded
 
     UpstreamError:
-      description: Upstream RDAP server error
+      description: Upstream RDAP or WHOIS server error, or a WHOIS answer holding no registration data
       content:
         application/json:
           schema:

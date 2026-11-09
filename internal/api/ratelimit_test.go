@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 func TestNewIPRateLimiter(t *testing.T) {
@@ -54,7 +54,7 @@ func TestIPRateLimiter_RateLimitMiddleware(t *testing.T) {
 	e := echo.New()
 
 	// Create test handler
-	handler := func(c echo.Context) error {
+	handler := func(c *echo.Context) error {
 		return c.String(http.StatusOK, "OK")
 	}
 
@@ -64,7 +64,7 @@ func TestIPRateLimiter_RateLimitMiddleware(t *testing.T) {
 	// First two requests should succeed (burst = 2)
 	for i := range 2 {
 		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
-		req.Header.Set("X-Real-IP", "10.0.0.1")
+		req.RemoteAddr = "10.0.0.1:1234"
 		rec := httptest.NewRecorder()
 		c := e.NewContext(req, rec)
 
@@ -79,7 +79,7 @@ func TestIPRateLimiter_RateLimitMiddleware(t *testing.T) {
 
 	// Third request should be rate limited
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
-	req.Header.Set("X-Real-IP", "10.0.0.1")
+	req.RemoteAddr = "10.0.0.1:1234"
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
@@ -98,7 +98,7 @@ func TestIPRateLimiter_DifferentIPsHaveSeparateLimits(t *testing.T) {
 
 	e := echo.New()
 
-	handler := func(c echo.Context) error {
+	handler := func(c *echo.Context) error {
 		return c.String(http.StatusOK, "OK")
 	}
 
@@ -106,7 +106,7 @@ func TestIPRateLimiter_DifferentIPsHaveSeparateLimits(t *testing.T) {
 
 	// First IP - first request should succeed
 	req1 := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
-	req1.Header.Set("X-Real-IP", "10.0.0.1")
+	req1.RemoteAddr = "10.0.0.1:1234"
 	rec1 := httptest.NewRecorder()
 	c1 := e.NewContext(req1, rec1)
 
@@ -119,7 +119,7 @@ func TestIPRateLimiter_DifferentIPsHaveSeparateLimits(t *testing.T) {
 
 	// First IP - second request should be rate limited
 	req1b := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
-	req1b.Header.Set("X-Real-IP", "10.0.0.1")
+	req1b.RemoteAddr = "10.0.0.1:1234"
 	rec1b := httptest.NewRecorder()
 	c1b := e.NewContext(req1b, rec1b)
 
@@ -132,7 +132,7 @@ func TestIPRateLimiter_DifferentIPsHaveSeparateLimits(t *testing.T) {
 
 	// Second IP - first request should succeed (different IP has its own limit)
 	req2 := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
-	req2.Header.Set("X-Real-IP", "10.0.0.2")
+	req2.RemoteAddr = "10.0.0.2:1234"
 	rec2 := httptest.NewRecorder()
 	c2 := e.NewContext(req2, rec2)
 
@@ -188,7 +188,7 @@ func TestIPRateLimiter_ResponseFormat(t *testing.T) {
 
 	e := echo.New()
 
-	handler := func(c echo.Context) error {
+	handler := func(c *echo.Context) error {
 		return c.String(http.StatusOK, "OK")
 	}
 
@@ -196,14 +196,14 @@ func TestIPRateLimiter_ResponseFormat(t *testing.T) {
 
 	// Exhaust the burst
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
-	req.Header.Set("X-Real-IP", "10.0.0.1")
+	req.RemoteAddr = "10.0.0.1:1234"
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 	_ = h(c)
 
 	// Next request should be rate limited with proper response
 	req2 := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
-	req2.Header.Set("X-Real-IP", "10.0.0.1")
+	req2.RemoteAddr = "10.0.0.1:1234"
 	rec2 := httptest.NewRecorder()
 	c2 := e.NewContext(req2, rec2)
 
@@ -322,7 +322,7 @@ func TestIPRateLimiter_MiddlewareWithSubnetFallback(t *testing.T) {
 
 	e := echo.New()
 
-	handler := func(c echo.Context) error {
+	handler := func(c *echo.Context) error {
 		return c.String(http.StatusOK, "OK")
 	}
 
@@ -333,7 +333,7 @@ func TestIPRateLimiter_MiddlewareWithSubnetFallback(t *testing.T) {
 
 	// Request from new IP should succeed using subnet limiter
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
-	req.Header.Set("X-Real-IP", "192.168.1.100")
+	req.RemoteAddr = "192.168.1.100:1234"
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 
@@ -352,7 +352,7 @@ func TestIPRateLimiter_MiddlewareFailClosedWhenBothAtCapacity(t *testing.T) {
 
 	e := echo.New()
 
-	handler := func(c echo.Context) error {
+	handler := func(c *echo.Context) error {
 		return c.String(http.StatusOK, "OK")
 	}
 
@@ -364,7 +364,7 @@ func TestIPRateLimiter_MiddlewareFailClosedWhenBothAtCapacity(t *testing.T) {
 
 	// Request from new IP should be rate limited (true fail-closed)
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
-	req.Header.Set("X-Real-IP", "new-ip-at-capacity")
+	req.RemoteAddr = "new-ip-at-capacity:1234"
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
 

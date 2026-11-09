@@ -1,11 +1,12 @@
 package api
 
 import (
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v5"
 )
 
 // BuildInfo holds version information passed from main.
@@ -39,10 +40,13 @@ func NewMetaHandler(info BuildInfo) *MetaHandler {
 }
 
 // Handle handles the /meta endpoint.
-func (h *MetaHandler) Handle(c echo.Context) error {
+func (h *MetaHandler) Handle(c *echo.Context) error {
 	uptime := time.Since(h.startTime)
 
-	hostname, _ := os.Hostname()
+	hostname, err := os.Hostname()
+	if err != nil {
+		slog.Debug("failed to resolve hostname", slog.String("error", err.Error()))
+	}
 
 	resp := MetaResponse{
 		Service:   "rdap-lookup",
